@@ -1,0 +1,219 @@
+th.shrink,td.shrink{
+	width: 1%;
+	white-space: nowrap;
+}
+.no-wrap{
+	white-space: nowrap;
+}
+.has-error .multiselect__tags{
+	border-color: #dd4b39;
+}
+.multiselect--active {
+  z-index: 10 !important;
+}
+
+.modal-dialog .overlay{
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255,255,255,0.7);
+    z-index: 1000;
+}
+.modal-dialog  .overlay>.fa, .modal-dialog  .overlay-wrapper .overlay>.fa {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    margin-left: -15px;
+    margin-top: -15px;
+    color: #000;
+    font-size: 30px;
+}
+.flashpool {
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    max-height: 400px;
+    width: 260px;
+    -webkit-perspective: 400px;
+    perspective: 400px;
+    z-index: 99999;
+}
+.table-responsive.top-align .vuetable thead th{
+    vertical-align: top;
+}
+
+
+
+.multiselect{
+    min-height: 34px !important;
+}
+.multiselect__select{
+    height: 34px !important;
+}
+.multiselect__tags{
+    padding: 3px 40px 0 8px !important;
+    border-radius: 0px !important; 
+    min-height: 35px !important;
+}
+
+.sidebar-menu li.tree-view.active span.pull-right-container i {
+    transform: rotate(90deg);
+}
+
+@-webkit-keyframes flash {
+  from,
+  50%,
+  to {
+    opacity: 1;
+  }
+
+  25%,
+  75% {
+    opacity: 0;
+  }
+}
+
+@keyframes flash {
+  from,
+  50%,
+  to {
+    opacity: 1;
+  }
+
+  25%,
+  75% {
+    opacity: 0;
+  }
+}
+
+.flash {
+  -webkit-animation-name: flash;
+  animation-name: flash;
+}
+
+.animated {
+  -webkit-animation-duration: 1s;
+  animation-duration: 1s;
+  -webkit-animation-fill-mode: both;
+  animation-fill-mode: both;
+}
+
+.animated.infinite {
+  -webkit-animation-iteration-count: infinite;
+  animation-iteration-count: infinite;
+}
+
+.animated.delay-2s {
+  -webkit-animation-delay: 2s;
+  animation-delay: 2s;
+}
+.animated.slow{
+  animation-duration: 3s;
+}
+
+.pulse {
+  -webkit-animation-name: pulse;
+  animation-name: pulse;
+  -webkit-animation-timing-function: ease-in-out;
+  animation-timing-function: ease-in-out;
+}
+
+@-webkit-keyframes pulse {
+  from {
+    -webkit-transform: scale3d(1, 1, 1);
+    transform: scale3d(1, 1, 1);
+  }
+
+  50% {
+    -webkit-transform: scale3d(1.05, 1.05, 1.05);
+    transform: scale3d(1.05, 1.05, 1.05);
+  }
+
+  to {
+    -webkit-transform: scale3d(1, 1, 1);
+    transform: scale3d(1, 1, 1);
+  }
+}
+@keyframes pulse {
+  from {
+    -webkit-transform: scale3d(1, 1, 1);
+    transform: scale3d(1, 1, 1);
+  }
+
+  50% {
+    -webkit-transform: scale3d(1.05, 1.05, 1.05);
+    transform: scale3d(1.05, 1.05, 1.05);
+  }
+
+  to {
+    -webkit-transform: scale3d(1, 1, 1);
+    transform: scale3d(1, 1, 1);
+  }
+}
+
+
+
+@-webkit-keyframes heartBeat {
+  0% {
+    -webkit-transform: scale(1);
+    transform: scale(1);
+  }
+
+  14% {
+    -webkit-transform: scale(1.3);
+    transform: scale(1.3);
+  }
+
+  28% {
+    -webkit-transform: scale(1);
+    transform: scale(1);
+  }
+
+  42% {
+    -webkit-transform: scale(1.3);
+    transform: scale(1.3);
+  }
+
+  70% {
+    -webkit-transform: scale(1);
+    transform: scale(1);
+  }
+}
+@keyframes heartBeat {
+  0% {
+    -webkit-transform: scale(1);
+    transform: scale(1);
+  }
+
+  14% {
+    -webkit-transform: scale(1.3);
+    transform: scale(1.3);
+  }
+
+  28% {
+    -webkit-transform: scale(1);
+    transform: scale(1);
+  }
+
+  42% {
+    -webkit-transform: scale(1.3);
+    transform: scale(1.3);
+  }
+
+  70% {
+    -webkit-transform: scale(1);
+    transform: scale(1);
+  }
+}
+.heartBeat {
+  -webkit-animation-name: heartBeat;
+  animation-name: heartBeat;
+  -webkit-animation-duration: calc(1s * 1.3);
+  animation-duration: calc(1s * 1.3);
+  -webkit-animation-duration: calc(var(--animate-duration) * 1.3);
+  animation-duration: calc(var(--animate-duration) * 1.3);
+  -webkit-animation-timing-function: ease-in-out;
+  animation-timing-function: ease-in-out;
+}

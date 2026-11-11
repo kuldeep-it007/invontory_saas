@@ -1,0 +1,39 @@
+<?php
+
+namespace Rosetta\NAV\WS\ItemCardIntransit;
+
+class Read_Result
+{
+
+    /**
+     * @var Item_Card_Intransit $Item_Card_Intransit
+     */
+    protected $Item_Card_Intransit = null;
+
+    /**
+     * @param Item_Card_Intransit $Item_Card_Intransit
+     */
+    public function __construct($Item_Card_Intransit)
+    {
+      $this->Item_Card_Intransit = $Item_Card_Intransit;
+    }
+
+    /**
+     * @return Item_Card_Intransit
+     */
+    public function getItem_Card_Intransit()
+    {
+      return $this->Item_Card_Intransit;
+    }
+
+    /**
+     * @param Item_Card_Intransit $Item_Card_Intransit
+     * @return \Rosetta\NAV\WS\ItemCardIntransit\Read_Result
+     */
+    public function setItem_Card_Intransit($Item_Card_Intransit)
+    {
+      $this->Item_Card_Intransit = $Item_Card_Intransit;
+      return $this;
+    }
+
+}

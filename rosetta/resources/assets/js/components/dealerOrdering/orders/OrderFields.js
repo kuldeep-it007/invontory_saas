@@ -1,0 +1,50 @@
+export default[
+	{
+		name:"number",
+		title:"PO No.",
+	//	dataClass:"shrink",
+	//	titleClass:"shrink"
+	},
+	/*{
+		name:"so",
+		title:"SO No.",
+		dataClass:"shrink",
+		titleClass:"shrink"
+	},*/
+	{
+		name:"__slot:customer.name",
+		title:"Customer",
+
+	},
+	{
+    	name: '__slot:stock_point',
+    	title: 'Stock Point',
+    	dataClass:'text-uppercase',
+    	//titleClass:"shrink"
+  	},
+	{
+		name:"amount",
+		title:"Net Amount",
+	//	dataClass:"shrink",
+    //	titleClass:"shrink"
+	},
+	{
+		name:"created_at",
+		title:"Order Date",
+		callback:function(val){
+			return moment.unix(val).format('DD MMM YYYY')
+		}
+	},
+	{
+    	name: '__slot:status',
+    	title: 'Status',
+    	dataClass:'text-uppercase',
+    	//titleClass:"shrink"
+  	},
+  	{
+    	name: '__slot:actions',
+    	title: '',
+    	dataClass:"shrink",
+    	titleClass:"shrink"
+  	}
+]

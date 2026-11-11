@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Default white-label CSS variables (R37.4 — zero-config boot).
+ *
+ * These are the fallbacks the UI renders with before any tenant branding is
+ * fetched, or when branding is unavailable. The theme loader overrides a
+ * subset of these at runtime (inline on <html> for first paint, then via the
+ * client provider) using the resolved tenant's colours. Values are raw HSL
+ * channels so Tailwind's hsl(var(--x) / <alpha>) wrapping works.
+ */
+:root {
+  /* Surfaces: a cool, near-white page with pure-white cards for gentle depth. */
+  --background: 210 40% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+
+  /* Brand: a deeper, more confident indigo-navy with clear white contrast. */
+  --primary: 222 60% 36%;
+  --primary-foreground: 0 0% 100%;
+
+  /* Accent: a soft indigo tint used for secondary buttons & subtle fills. */
+  --accent: 222 44% 95%;
+  --accent-foreground: 222 55% 28%;
+
+  /* Neutrals: a cohesive cool-gray ramp for muted surfaces and secondary text. */
+  --muted: 215 32% 94%;
+  --muted-foreground: 215 20% 42%;
+
+  /* Lines & focus: a slightly cooler border + a brand-tinted focus ring. */
+  --border: 215 25% 88%;
+  --ring: 222 60% 45%;
+
+  /* Semantic colours (channels so hsl(var(--x) / a) works). */
+  --success: 152 60% 36%;
+  --success-foreground: 0 0% 100%;
+  --warning: 32 90% 46%;
+  --warning-foreground: 0 0% 100%;
+  --danger: 0 72% 48%;
+  --danger-foreground: 0 0% 100%;
+
+  --radius: 0.625rem;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Comfortable, consistent text selection in the brand colour. */
+::selection {
+  background-color: hsl(var(--primary) / 0.15);
+  color: hsl(var(--foreground));
+}
+
+/* Softer, theme-aware scrollbars for a more polished feel. */
+* {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.35);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.55);
+}

@@ -1,0 +1,42 @@
+{
+    "private": true,
+    "scripts": {
+        "dev": "npm run development",
+        "development": "cross-env NODE_ENV=development node_modules/webpack/bin/webpack.js --progress --hide-modules --config=node_modules/laravel-mix/setup/webpack.config.js",
+        "watch": "cross-env NODE_ENV=development node_modules/webpack/bin/webpack.js --watch --progress --hide-modules --config=node_modules/laravel-mix/setup/webpack.config.js",
+        "watch-poll": "npm run watch -- --watch-poll",
+        "hot": "cross-env NODE_ENV=development node_modules/webpack-dev-server/bin/webpack-dev-server.js --inline --hot --config=node_modules/laravel-mix/setup/webpack.config.js",
+        "prod": "npm run production",
+        "production": "cross-env NODE_ENV=production node_modules/webpack/bin/webpack.js --progress --hide-modules --config=node_modules/laravel-mix/setup/webpack.config.js"
+    },
+    "devDependencies": {
+        "axios": "^0.16.2",
+        "bootstrap-sass": "^3.3.7",
+        "cross-env": "^5.0.1",
+        "jquery": "^3.1.1",
+        "laravel-mix": "^1.0",
+        "lodash": "^4.17.4"
+    },
+    "dependencies": {
+        "@xkeshi/vue-countdown": "^0.6.0",
+        "awesome-phonenumber": "^2.7.0",
+        "blob-util": "^2.0.2",
+        "file-saver": "^2.0.2",
+        "moment": "^2.19.1",
+        "number-to-words": "^1.2.4",
+        "printd": "^1.3.0",
+        "pusher-js": "^4.3.1",
+        "sweetalert": "^2.1.0",
+        "underscore": "^1.8.3",
+        "vee-validate": "^2.0.0-rc.19",
+        "vue": "^2.5.2",
+        "vue-axios": "^2.0.2",
+        "vue-flash-message": "^0.7.2",
+        "vue-multiselect": "^2.0.3",
+        "vue-router": "^3.0.1",
+        "vue-switches": "^2.0.1",
+        "vue2-datepicker": "^2.4.1",
+        "vuex": "^3.0.0",
+        "vuex-persistedstate": "^2.0.0"
+    }
+}

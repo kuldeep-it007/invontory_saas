@@ -1,0 +1,96 @@
+<?php
+
+namespace Rosetta\NAV\WS\Customer;
+
+class Customer_Card_Fields
+{
+    const __default = 'No';
+    const No = 'No';
+    const Name = 'Name';
+    const Address = 'Address';
+    const Address_2 = 'Address_2';
+    const Post_Code = 'Post_Code';
+    const City = 'City';
+    const Country_Region_Code = 'Country_Region_Code';
+    const State_Code = 'State_Code';
+    const Phone_No = 'Phone_No';
+    const Primary_Contact_No = 'Primary_Contact_No';
+    const Customer_Group_For_Credit = 'Customer_Group_For_Credit';
+    const Contact = 'Contact';
+    const Search_Name = 'Search_Name';
+    const Location_Code = 'Location_Code';
+    const Balance_LCY = 'Balance_LCY';
+    const Credit_Limit_LCY = 'Credit_Limit_LCY';
+    const Salesperson_Code = 'Salesperson_Code';
+    const Responsibility_Center = 'Responsibility_Center';
+    const Service_Zone_Code = 'Service_Zone_Code';
+    const Blocked = 'Blocked';
+    const Territory_Code = 'Territory_Code';
+    const Last_Date_Modified = 'Last_Date_Modified';
+    const Fax_No = 'Fax_No';
+    const E_Mail = 'E_Mail';
+    const Home_Page = 'Home_Page';
+    const Distributor_Code = 'Distributor_Code';
+    const Franchisee = 'Franchisee';
+    const IC_Partner_Code = 'IC_Partner_Code';
+    const Document_Sending_Profile = 'Document_Sending_Profile';
+    const Form_Code = 'Form_Code';
+    const Tax_Liable = 'Tax_Liable';
+    const Structure = 'Structure';
+    const Gen_Bus_Posting_Group = 'Gen_Bus_Posting_Group';
+    const VAT_Bus_Posting_Group = 'VAT_Bus_Posting_Group';
+    const Customer_Posting_Group = 'Customer_Posting_Group';
+    const Customer_Price_Group = 'Customer_Price_Group';
+    const Customer_Disc_Group = 'Customer_Disc_Group';
+    const Bill_to_Customer_No = 'Bill_to_Customer_No';
+    const VAT_Registration_No = 'VAT_Registration_No';
+    const GLN = 'GLN';
+    const Invoice_Copies = 'Invoice_Copies';
+    const Invoice_Disc_Code = 'Invoice_Disc_Code';
+    const Copy_Sell_to_Addr_to_Qte_From = 'Copy_Sell_to_Addr_to_Qte_From';
+    const Excise_Bus_Posting_Group = 'Excise_Bus_Posting_Group';
+    const Allow_Line_Disc = 'Allow_Line_Disc';
+    const Prices_Including_VAT = 'Prices_Including_VAT';
+    const Prepayment_Percent = 'Prepayment_Percent';
+    const Application_Method = 'Application_Method';
+    const Partner_Type = 'Partner_Type';
+    const Payment_Terms_Code = 'Payment_Terms_Code';
+    const Payment_Method_Code = 'Payment_Method_Code';
+    const Reminder_Terms_Code = 'Reminder_Terms_Code';
+    const Fin_Charge_Terms_Code = 'Fin_Charge_Terms_Code';
+    const Cash_Flow_Payment_Terms_Code = 'Cash_Flow_Payment_Terms_Code';
+    const Print_Statements = 'Print_Statements';
+    const Last_Statement_No = 'Last_Statement_No';
+    const Block_Payment_Tolerance = 'Block_Payment_Tolerance';
+    const Preferred_Bank_Account = 'Preferred_Bank_Account';
+    const Combine_Shipments = 'Combine_Shipments';
+    const Reserve = 'Reserve';
+    const Shipping_Advice = 'Shipping_Advice';
+    const Shipment_Method_Code = 'Shipment_Method_Code';
+    const Shipping_Agent_Code = 'Shipping_Agent_Code';
+    const Shipping_Agent_Service_Code = 'Shipping_Agent_Service_Code';
+    const Shipping_Time = 'Shipping_Time';
+    const Base_Calendar_Code = 'Base_Calendar_Code';
+    const Customized_Calendar = 'Customized_Calendar';
+    const Currency_Code = 'Currency_Code';
+    const Language_Code = 'Language_Code';
+    const L_S_T_No = 'L_S_T_No';
+    const C_S_T_No = 'C_S_T_No';
+    const E_C_C_No = 'E_C_C_No';
+    const Range = 'Range';
+    const Collectorate = 'Collectorate';
+    const GST_Customer_Type = 'GST_Customer_Type';
+    const GST_Registration_Type = 'GST_Registration_Type';
+    const GST_Registration_No = 'GST_Registration_No';
+    const e_Commerce_Operator = 'e_Commerce_Operator';
+    const P_A_N_No = 'P_A_N_No';
+    const P_A_N_Status = 'P_A_N_Status';
+    const P_A_N_Reference_No = 'P_A_N_Reference_No';
+    const T_I_N_No = 'T_I_N_No';
+    const Export_or_Deemed_Export = 'Export_or_Deemed_Export';
+    const VAT_Exempted = 'VAT_Exempted';
+    const Nature_of_Services = 'Nature_of_Services';
+    const Service_Entity_Type = 'Service_Entity_Type';
+
+
+}

@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Mon, 26 Oct 2026 18:49:19 GMT
+Content-Type: application/json
+Transfer-Encoding: chunked
+Connection: keep-alive
+Host: acme.localhost
+X-Powered-By: PHP/8.5.12
+Cache-Control: no-cache, private
+Access-Control-Allow-Origin: *
+
+{"status":"ok","service":"Inventory Platform"}

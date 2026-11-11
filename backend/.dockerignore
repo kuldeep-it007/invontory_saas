@@ -1,0 +1,21 @@
+# Keep the backend build context lean and avoid copying host-specific state.
+vendor
+node_modules
+.env
+.env.backup
+.env.production
+# Stale package-discovery / config caches must not be baked in: they may
+# reference dev-only providers (e.g. Laravel Pail) that are absent from the
+# --no-dev production vendor tree. They are regenerated at runtime.
+bootstrap/cache/*.php
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+.phpunit.cache
+.phpunit.result.cache
+tests
+.git
+.idea
+.vscode
+*.log

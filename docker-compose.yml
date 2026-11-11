@@ -1,0 +1,141 @@
+# ─── Inventory & Distribution Platform — full stack ─────────────────────────
+#
+# Runs everything with no local toolchain installed:
+#   • mysql     — central DB + per-tenant DBs (stancl/tenancy)
+#   • redis     — queue + cache
+#   • api       — Laravel REST API (php artisan serve) — migrates + seeds on boot
+#   • worker    — Laravel queue worker (orders, notifications, exports, provisioning)
+#   • frontend  — Next.js standalone server
+#
+# Usage:
+#   docker compose up --build
+# Then open:
+#   Frontend  http://localhost:3000
+#   API       http://localhost:8000/api/health
+#
+# Stop + remove:        docker compose down
+# Reset the database:   docker compose down -v   (drops the mysql volume)
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: inventory_central
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-psecret"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # The tenancy manager creates/drops tenant databases at runtime, so the
+    # app DB user needs privileges beyond the single central schema. Running as
+    # root here keeps local provisioning simple; scope this down in production.
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      # Central DB (root so stancl/tenancy can CREATE/DROP tenant databases).
+      DB_CONNECTION: central
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: inventory_central
+      DB_USERNAME: root
+      DB_PASSWORD: secret
+      # Redis queue + cache.
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      CACHE_STORE: redis
+      # App basics. HTTP (not HTTPS) for local container networking.
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+      # This container owns the one-time migrate + seed.
+      RUN_SETUP: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+
+  worker:
+    build:
+      context: ./backend
+    environment:
+      DB_CONNECTION: central
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: inventory_central
+      DB_USERNAME: root
+      DB_PASSWORD: secret
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      CACHE_STORE: redis
+      APP_ENV: local
+      APP_URL: http://localhost:8000
+      # The API container runs migrations; the worker only waits + works.
+      RUN_SETUP: "false"
+    depends_on:
+      api:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=120"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # EMPTY = same-origin: the browser calls /api/* on whatever host it is
+        # viewing (e.g. acme.localhost) and nginx proxies it to the backend with
+        # that Host, so stancl/tenancy resolves the correct tenant. No tenant
+        # host is baked in. Access the app through nginx (http://localhost and
+        # http://<subdomain>.localhost), NOT the raw :3000 port.
+        NEXT_PUBLIC_API_BASE_URL: ""
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+
+  # Wildcard reverse proxy: one entry point for the apex (central/platform) and
+  # every tenant subdomain (*.localhost / *.example.com). Forwards the original
+  # Host so the backend resolves the correct tenant. Browse the whole platform
+  # through http://localhost (apex) and http://<subdomain>.localhost (tenants).
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_started
+      frontend:
+        condition: service_started
+
+volumes:
+  mysql-data:

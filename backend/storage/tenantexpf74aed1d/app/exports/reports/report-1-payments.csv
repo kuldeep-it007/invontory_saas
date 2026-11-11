@@ -1,0 +1,5 @@
+period,buyer_type,buyer_id,method,collected,payment_count
+2026-09-03,"App\Models\Distributor",1,cash,10.00,1
+2026-09-03,"App\Models\Distributor",2,cash,10.00,1
+2026-09-03,"App\Models\Distributor",3,cash,10.00,1
+2026-09-03,"App\Models\Distributor",4,cash,10.00,1

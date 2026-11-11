@@ -1,0 +1,37 @@
+<?php
+
+namespace Rosetta\Mail;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Mail\Mailable;
+use Illuminate\Queue\SerializesModels;
+use Rosetta\Models\AdvanceOrder\AdvanceItem;
+
+class AdvanceCartItemQuantityDiscount extends Mailable
+{
+    use Queueable, SerializesModels;
+    public $advanceItem, $currentQuantity, $currentDiscount, $advanceItemProductName;
+    /**
+     * Create a new message instance.
+     *
+     * @return void
+     */
+    public function __construct(AdvanceItem $advanceItem, $currentQuantity, $currentDiscount, $advanceItemProductName)
+    {
+        $this->advanceItem = $advanceItem;
+        $this->currentQuantity = $currentQuantity;
+        $this->currentDiscount = $currentDiscount;
+        $this->advanceItemProductName = $advanceItemProductName;
+    }
+
+    /**
+     * Build the message.
+     *
+     * @return $this
+     */
+    public function build()
+    {
+        return $this->markdown('emails.advanceOrders.QuantityDiscount');
+    }
+}

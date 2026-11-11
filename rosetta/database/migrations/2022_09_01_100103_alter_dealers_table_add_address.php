@@ -1,0 +1,35 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+class AlterDealersTableAddAddress extends Migration
+{
+    /**
+     * Run the migrations.
+     *
+     * @return void
+     */
+    public function up()
+    {
+        Schema::table('dealers', function(Blueprint $table)
+        {
+            $table->string('address')->nullable()->default(null)->after('deleted_at');
+            $table->string('address_2')->nullable()->default(null)->after('address');
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     *
+     * @return void
+     */
+    public function down()
+    {
+        Schema::table('dealers', function (Blueprint $table){
+            $table->dropColumn(['address_2']);
+            $table->dropColumn(['address']);
+        });
+    }
+}
