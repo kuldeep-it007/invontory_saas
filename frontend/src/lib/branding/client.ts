@@ -32,7 +32,13 @@ import type { Branding, TenantSettingsResponse } from "./types";
 
 /** Base URL of the Laravel API. Configure via `NEXT_PUBLIC_API_BASE_URL`. */
 export function apiBaseUrl(): string {
+  // In production the BROWSER bundle is built with an empty base URL so it calls
+  // the API same-origin (the tenant subdomain). The Next.js SERVER, however,
+  // cannot use a relative URL, so on the server prefer the internal API address
+  // (API_BASE_URL, e.g. http://api:8000) read at runtime.
+  const internal = typeof window === "undefined" ? process.env.API_BASE_URL : undefined;
   return (
+    internal ??
     process.env.NEXT_PUBLIC_API_BASE_URL ??
     process.env.API_BASE_URL ??
     "http://localhost:8000"
@@ -59,6 +65,12 @@ function hostHeaders(host: string | null): HeadersInit {
     // prod paths identical from the backend's perspective.
     headers["X-Forwarded-Host"] = host;
     headers["Host"] = host;
+    // The server-to-API hop is plain HTTP on the internal network; the user's
+    // connection was HTTPS. Say so, or the API's HTTPS enforcement would reject
+    // this internal call.
+    if (typeof window === "undefined") {
+      headers["X-Forwarded-Proto"] = "https";
+    }
   }
   return headers;
 }

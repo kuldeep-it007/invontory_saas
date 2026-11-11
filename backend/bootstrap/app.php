@@ -26,6 +26,24 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         /*
         |------------------------------------------------------------------
+        | Trusted proxies
+        |------------------------------------------------------------------
+        | TLS is terminated at a reverse proxy (nginx) in production and the
+        | request reaches PHP over plain HTTP with `X-Forwarded-Proto: https`.
+        | Without trusting that proxy, Request::isSecure() is false and the
+        | EnforceHttps middleware (R36.1) would reject EVERY request with 426,
+        | and the original tenant host (X-Forwarded-Host) would be ignored.
+        | The app container is only reachable through the proxy, so trusting
+        | all upstream addresses ("*") is the default; set TRUSTED_PROXIES to a
+        | comma-separated list of IPs/CIDRs to narrow it.
+        */
+        $trusted = (string) env('TRUSTED_PROXIES', '*');
+        $middleware->trustProxies(
+            at: $trusted === '*' ? '*' : array_map('trim', explode(',', $trusted)),
+        );
+
+        /*
+        |------------------------------------------------------------------
         | Middleware aliases
         |------------------------------------------------------------------
         | Short names for the building blocks of the request pipeline so

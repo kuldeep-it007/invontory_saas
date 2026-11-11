@@ -16,10 +16,13 @@ return [
      *
      * Only relevant if you're using the domain or subdomain identification middleware.
      */
-    'central_domains' => [
-        '127.0.0.1',
-        'localhost',
-    ],
+    // Comma-separated list in CENTRAL_DOMAINS (e.g. "inspiresoft.online"). The
+    // FIRST entry is also the suffix used when provisioning a tenant without an
+    // explicit domain. Defaults keep local development unchanged.
+    'central_domains' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('CENTRAL_DOMAINS', '127.0.0.1,localhost')),
+    ))),
 
     /**
      * Tenancy bootstrappers are executed when tenancy is initialized.
