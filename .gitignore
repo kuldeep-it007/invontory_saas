@@ -1,31 +1,126 @@
-/vendor/
+# ─────────────────────────────────────────────────────────────────────────────
+# Inventory & Distribution Platform — repository ignore rules
+#
+# Layout: backend/ (Laravel API), frontend/ (Next.js), rosetta/ (reference app),
+# plus root deploy/dev scripts. Project-specific paths are ANCHORED (leading /)
+# so a rule can never hide real source in another project, e.g. `vendor/` would
+# also swallow rosetta/resources/assets/js/vendor/.
+#
+# NOTE: .gitignore only affects UNTRACKED files. A file that is already tracked
+# stays tracked until you run `git rm --cached <path>`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
-npm-debug.log
-yarn-error.log
+/backend/vendor/
+/rosetta/vendor/
 
-# Laravel 4 specific
-bootstrap/compiled.php
-app/storage/
-
-# Laravel 5 & Lumen specific
-public/storage
-public/hot
-
-# Laravel 5 & Lumen specific with changed public path
-public_html/storage
-public_html/hot
-
-storage/*.key
+# ── Environment files & secrets ──────────────────────────────────────────────
+# Real env files are never committed; only the *.example templates are.
 .env
-Homestead.yaml
-Homestead.json
-/.vagrant
-.phpunit.result.cache
-/.phpunit.cache
-
-/public/build
-/storage/pail
-.env.backup
-.env.production
-.phpactor.json
+.env.*
+!.env.example
 auth.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+.htpasswd
+
+# ── Build output & framework caches ──────────────────────────────────────────
+.next/
+/frontend/out/
+/frontend/build/
+/frontend/dist/
+*.tsbuildinfo
+next-env.d.ts
+.eslintcache
+/backend/public/build/
+/backend/public/hot
+/backend/public/storage
+/backend/public/fonts-manifest.dev.json
+/rosetta/public/hot
+/rosetta/public/storage
+/rosetta/public/mix-manifest.json
+
+# ── Laravel runtime (backend + rosetta) ──────────────────────────────────────
+# Logs, cache, sessions and compiled views are generated at runtime.
+/backend/storage/logs/*
+/backend/storage/framework/cache/*
+/backend/storage/framework/sessions/*
+/backend/storage/framework/views/*
+/backend/storage/pail
+/backend/storage/*.key
+# Per-tenant file storage (stancl/tenancy): exports, challans, uploads and the
+# many throw-away tenants created by the test suite.
+/backend/storage/tenant*/
+/backend/bootstrap/cache/*
+!/backend/bootstrap/cache/.gitignore
+/rosetta/bootstrap/cache/*
+!/rosetta/bootstrap/cache/.gitignore
+/rosetta/storage/logs/*
+/rosetta/storage/framework/cache/*
+/rosetta/storage/framework/sessions/*
+/rosetta/storage/framework/views/*
+
+# ── Tests & coverage ─────────────────────────────────────────────────────────
+.phpunit.result.cache
+.phpunit.cache/
+coverage/
+.nyc_output/
+*.lcov
+
+# ── Logs & debug output ──────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Temporary & backup files ─────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+# Office / LibreOffice lock files
+~$*
+.~lock.*#
+
+# ── OS junk ──────────────────────────────────────────────────────────────────
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ── Editors & IDEs ───────────────────────────────────────────────────────────
+.idea/
+.vscode/
+.nova/
+.zed/
+.cursor/
+.codex/
+.phpactor.json
+_ide_helper.php
+_ide_helper_models.php
+.phpstorm.meta.php
+
+# Kiro: keep specs, ignore local settings (MCP config can hold tokens).
+.kiro/settings/
+
+# ── Local dev environments ───────────────────────────────────────────────────
+Homestead.json
+Homestead.yaml
+/.vagrant
+docker-compose.override.yml
+
+# ── Deployment artefacts & backups (never commit) ────────────────────────────
+/backups/
+*.sql.gz
+*.dump
+.github
