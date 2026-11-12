@@ -31,6 +31,21 @@ class TenantSettingsController extends Controller
     }
 
     /**
+     * GET /api/tenant/branding — PUBLIC display branding for the tenant resolved
+     * from the request host (brand name, logo, favicon, colour theme). No token
+     * is required: the login page and the first server render need it before
+     * anyone is signed in. Never includes mail or domain settings.
+     */
+    public function branding(): JsonResponse
+    {
+        return response()
+            ->json(['data' => $this->whiteLabel->publicBranding()])
+            // Short shared cache: branding rarely changes and every page load
+            // asks for it; an update is visible within a minute.
+            ->header('Cache-Control', 'public, max-age=60');
+    }
+
+    /**
      * PATCH /api/tenant/settings — update white-label settings (R3.5).
      *
      * Authorized to Company_Admin via route middleware. A partial payload is

@@ -50,7 +50,10 @@ function devTenantHost(): string | null {
   return process.env.NEXT_PUBLIC_TENANT_HOST ?? null;
 }
 
-const SETTINGS_PATH = "/api/tenant/settings";
+// PUBLIC branding endpoint: works before sign-in (login page, first render).
+// `/api/tenant/settings` needs a token and returned 401 here, so every page
+// silently fell back to the default name with no logo/favicon.
+const SETTINGS_PATH = "/api/tenant/branding";
 
 /**
  * Build the headers forwarding the resolution host to the backend. On the
@@ -94,9 +97,9 @@ export async function fetchBranding(host?: string | null): Promise<Branding> {
   try {
     const res = await fetch(url, {
       headers: hostHeaders(resolvedHost ?? null),
-      // Branding is per-tenant and may change; revalidate often but allow a
-      // short cache so first paint is fast. Server components honour this.
-      next: { revalidate: 60 },
+      // Always ask the API: branding is per HOST, and Next's data cache keys
+      // only on the URL, so caching here could show one company's logo on
+      // another company's domain. The API sends its own short Cache-Control.
       cache: "no-store",
     });
 

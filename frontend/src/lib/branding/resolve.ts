@@ -33,8 +33,43 @@ function tokensFromObject(obj: Record<string, unknown>): ThemeTokens {
 
   // Drop undefined keys so callers only override what the tenant actually set.
   return Object.fromEntries(
-    Object.entries(tokens).filter(([, v]) => v !== undefined),
+    Object.entries(tokens)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, k === "radius" ? v : toHslChannels(v as string)]),
   ) as ThemeTokens;
+}
+
+/**
+ * The theme uses `hsl(var(--primary) / <alpha>)`, so colour variables must hold
+ * raw HSL channels ("0 72% 42%"). Convert a hex colour (#rgb or #rrggbb) to
+ * that form; anything else (already channels, or another format) is returned
+ * unchanged. Without this a hex brand colour produced `hsl(#b91c1c / 1)`, which
+ * is invalid CSS, and the brand colour silently disappeared.
+ */
+export function toHslChannels(value: string): string {
+  const hex = value.trim().replace(/^#/, "");
+  if (!/^([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex) || !value.trim().startsWith("#")) return value;
+
+  const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+
+  return `${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
 }
 
 /**
@@ -64,7 +99,7 @@ export function parseColorTheme(raw: string | null): ThemeTokens {
   }
 
   // Treat a lone colour string as the primary brand colour.
-  return { primary: value };
+  return { primary: toHslChannels(value) };
 }
 
 /**

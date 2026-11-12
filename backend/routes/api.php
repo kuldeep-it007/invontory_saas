@@ -97,6 +97,13 @@ Route::middleware('tenant.public')->group(function () {
     | recorded with status `pending` for a Company_Admin to approve/reject later.
     */
     Route::post('/sign-up', [ProspectController::class, 'store']);
+
+    /*
+    | Public display branding (R3.2): name, logo, favicon and colours for the
+    | tenant resolved from the host, so the login page and the first render show
+    | the company's identity before sign-in. Read-only; no sensitive settings.
+    */
+    Route::get('/tenant/branding', [TenantSettingsController::class, 'branding']);
 });
 
 /*

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Mail\AppliesTenantSender;
+use App\Models\Company;
 use App\Models\TenantSetting;
 use App\Support\AuditRecorder;
 use Illuminate\Support\Facades\DB;
@@ -124,6 +125,35 @@ class WhiteLabelService
         }
 
         return $after;
+    }
+
+    /**
+     * The PUBLIC branding for the active tenant: only what a visitor's browser
+     * needs to render the workspace (name, logo, favicon, colours). Safe to
+     * serve without authentication — the login page needs it before anyone has
+     * signed in. Mail sender settings and the custom domain are deliberately
+     * excluded.
+     *
+     * When no brand name is configured, the tenant's Company name is used, so a
+     * workspace is always labelled with the company it belongs to.
+     *
+     * @return array{brand_name: string|null, logo: string|null, favicon: string|null, color_theme: string|null}
+     */
+    public function publicBranding(): array
+    {
+        $settings = $this->get();
+
+        $brandName = $settings['brand_name'];
+        if ($brandName === null || trim($brandName) === '') {
+            $brandName = Company::query()->value('name');
+        }
+
+        return [
+            'brand_name' => $brandName,
+            'logo' => $settings['logo'],
+            'favicon' => $settings['favicon'],
+            'color_theme' => $settings['color_theme'],
+        ];
     }
 
     /**

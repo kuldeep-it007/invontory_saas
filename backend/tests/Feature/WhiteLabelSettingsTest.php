@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Models\AuditLog;
+use App\Models\Company;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
 use App\Models\User;
@@ -211,6 +212,77 @@ it('resolves the per-tenant outbound sender identity and falls back to global co
             expect($identity['address'])->toBe('noreply@acme.test')
                 ->and($identity['name'])->toBe('Acme Mailer');
         });
+    } finally {
+        teardownWhiteLabelTenants($tenants);
+    }
+});
+
+it('exposes only display branding publicly, falling back to the company name (R3.2)', function () {
+    $tenants = [];
+    try {
+        $tenant = provisionWhiteLabelTenant($tenants);
+
+        $tenant->run(function () {
+            Company::query()->create(['name' => 'Acme Textiles']);
+            $service = app(WhiteLabelService::class);
+
+            // Nothing configured: the company name labels the workspace.
+            expect($service->publicBranding())->toBe([
+                'brand_name' => 'Acme Textiles',
+                'logo' => null,
+                'favicon' => null,
+                'color_theme' => null,
+            ]);
+
+            $service->update([
+                'logo' => 'https://cdn.example.test/logo.png',
+                'favicon' => 'https://cdn.example.test/favicon.ico',
+                'mail_from_address' => 'billing@acme.test',
+                'custom_domain' => 'portal.acme.test',
+            ]);
+
+            $branding = $service->publicBranding();
+
+            // Configured logo + favicon come through; private settings never do.
+            expect($branding['logo'])->toBe('https://cdn.example.test/logo.png')
+                ->and($branding['favicon'])->toBe('https://cdn.example.test/favicon.ico')
+                ->and($branding['brand_name'])->toBe('Acme Textiles')
+                ->and(array_keys($branding))->toBe(['brand_name', 'logo', 'favicon', 'color_theme']);
+
+            // An explicit brand name wins over the company name.
+            $service->update(['brand_name' => 'Acme Online']);
+            expect($service->publicBranding()['brand_name'])->toBe('Acme Online');
+        });
+    } finally {
+        teardownWhiteLabelTenants($tenants);
+    }
+});
+
+it('serves branding for the requesting domain without authentication (R3.2)', function () {
+    $tenants = [];
+    try {
+        $tenant = provisionWhiteLabelTenant($tenants);
+        $domain = $tenant->domains()->value('domain');
+
+        $tenant->run(function () {
+            Company::query()->create(['name' => 'Globex Fabrics']);
+            app(WhiteLabelService::class)->update([
+                'favicon' => 'https://cdn.example.test/globex.ico',
+                'mail_from_address' => 'secret@globex.test',
+            ]);
+        });
+
+        // No token: the login page needs this before anyone signs in.
+        $response = $this->getJson("http://{$domain}/api/tenant/branding");
+
+        $response->assertOk()
+            ->assertJsonPath('data.brand_name', 'Globex Fabrics')
+            ->assertJsonPath('data.favicon', 'https://cdn.example.test/globex.ico')
+            ->assertJsonMissingPath('data.mail_from_address')
+            ->assertJsonMissingPath('data.custom_domain');
+
+        // The full settings endpoint stays protected.
+        $this->getJson("http://{$domain}/api/tenant/settings")->assertUnauthorized();
     } finally {
         teardownWhiteLabelTenants($tenants);
     }
