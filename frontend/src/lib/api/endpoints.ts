@@ -305,6 +305,14 @@ export const settingsApi = {
   show: () => api.get<Resource<TenantSettings>>("/tenant/settings"),
   update: (payload: Partial<TenantSettings>) =>
     api.patch<Resource<TenantSettings>>("/tenant/settings", payload),
+  /** Upload the company logo or favicon (stored in object storage). */
+  uploadAsset: (asset: "logo" | "favicon", file: File) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return api.post<Resource<TenantSettings>>(`/tenant/settings/${asset}`, form);
+  },
+  removeAsset: (asset: "logo" | "favicon") =>
+    api.del<Resource<TenantSettings>>(`/tenant/settings/${asset}`),
 };
 
 /* ─── Reports (R28, R29) ──────────────────────────────────────────────────── */

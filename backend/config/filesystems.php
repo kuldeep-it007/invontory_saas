@@ -60,7 +60,58 @@ return [
             'report' => false,
         ],
 
+        /*
+        | Oracle Cloud (OCI) Object Storage via its S3-compatible API.
+        |
+        | Endpoint: https://<namespace>.compat.objectstorage.<region>.oraclecloud.com
+        | Keys:     an OCI "Customer Secret Key" (Profile → Customer secret keys).
+        | OCI requires path-style addressing. Recent AWS SDKs send CRC checksums
+        | by default, which S3-compatible stores do not all accept, so checksums
+        | are only sent/validated when an operation requires them.
+        */
+        'oci' => [
+            'driver' => 's3',
+            'key' => env('OCI_ACCESS_KEY_ID'),
+            'secret' => env('OCI_SECRET_ACCESS_KEY'),
+            'region' => env('OCI_REGION'),
+            'bucket' => env('OCI_BUCKET'),
+            'endpoint' => env('OCI_ENDPOINT') ?: (env('OCI_NAMESPACE') && env('OCI_REGION')
+                ? sprintf('https://%s.compat.objectstorage.%s.oraclecloud.com', env('OCI_NAMESPACE'), env('OCI_REGION'))
+                : null),
+            'use_path_style_endpoint' => true,
+            'visibility' => 'private',
+            'request_checksum_calculation' => 'when_required',
+            'response_checksum_validation' => 'when_required',
+            'throw' => true,
+            'report' => true,
+        ],
+
+        /*
+        | Local fallback for user uploads when no object storage is configured
+        | (development / zero-config boot). Not web-served directly: files are
+        | streamed through GET /api/media/... like the object-storage files.
+        */
+        'uploads_local' => [
+            'driver' => 'local',
+            'root' => storage_path('app/uploads'),
+            'throw' => true,
+            'report' => true,
+        ],
+
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Uploads disk
+    |--------------------------------------------------------------------------
+    |
+    | Where user-uploaded files (logos, favicons, profile pictures) are stored.
+    | "oci" = Oracle Object Storage; defaults to the local fallback so the app
+    | boots with zero configuration.
+    |
+    */
+
+    'uploads_disk' => env('UPLOADS_DISK', 'uploads_local'),
 
     /*
     |--------------------------------------------------------------------------

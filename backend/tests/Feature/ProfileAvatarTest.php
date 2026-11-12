@@ -51,6 +51,11 @@ function teardownAvatarTenants(array $registry): void
 {
     foreach ($registry as $t) {
         try {
+            app(\App\Services\MediaStorage::class)->disk()->deleteDirectory('tenants/'.$t->getTenantKey());
+        } catch (Throwable $e) {
+            // best-effort
+        }
+        try {
             $t->database()->getTenantDatabaseManager()->deleteDatabase($t);
         } catch (Throwable $e) {
             // best-effort
@@ -77,7 +82,8 @@ it('uploads a picture, returns it on /me, and removes it', function () {
         $file = UploadedFile::fake()->image('me.png', 256, 256);
         $up = $this->withHeaders($auth)->post("http://{$domain}/api/me/avatar", ['avatar' => $file], ['Accept' => 'application/json']);
         $up->assertOk();
-        expect((string) $up->json('data.avatar'))->toStartWith('data:image/png;base64,');
+        // Stored on the uploads disk; only a same-origin media URL is kept.
+        expect((string) $up->json('data.avatar'))->toMatch('#^/api/media/tenants/[A-Za-z0-9_-]+/avatar/[A-Za-z0-9]{32}\.png$#');
 
         $this->withHeaders($auth)->getJson("http://{$domain}/api/me")
             ->assertOk()

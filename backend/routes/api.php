@@ -25,6 +25,7 @@ use App\Http\Controllers\PanelController;
 use App\Http\Controllers\PartyImpersonationController;
 use App\Http\Controllers\PriceController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\MediaController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProspectController;
 use App\Http\Controllers\ReportController;
@@ -105,6 +106,13 @@ Route::middleware('tenant.public')->group(function () {
     | the company's identity before sign-in. Read-only; no sensitive settings.
     */
     Route::get('/tenant/branding', [TenantSettingsController::class, 'branding']);
+
+    /*
+    | Uploaded files (logo, favicon, profile pictures), streamed from the private
+    | uploads bucket. Public so the login page can show the company logo; the
+    | controller only serves files of THIS domain's tenant.
+    */
+    Route::get('/media/{path}', [MediaController::class, 'show'])->where('path', '.*');
 });
 
 /*
@@ -160,6 +168,14 @@ Route::middleware('tenant')->group(function () {
         ->middleware('permission:settings.view');
 
     Route::patch('/tenant/settings', [TenantSettingsController::class, 'update'])
+        ->middleware('role:Company_Admin');
+
+    // Upload / remove the company logo or favicon (stored in object storage).
+    Route::post('/tenant/settings/{asset}', [TenantSettingsController::class, 'uploadAsset'])
+        ->whereIn('asset', ['logo', 'favicon'])
+        ->middleware('role:Company_Admin');
+    Route::delete('/tenant/settings/{asset}', [TenantSettingsController::class, 'deleteAsset'])
+        ->whereIn('asset', ['logo', 'favicon'])
         ->middleware('role:Company_Admin');
 
     /*

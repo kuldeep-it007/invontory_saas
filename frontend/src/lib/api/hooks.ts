@@ -19,7 +19,7 @@ import {
   tenantUserApi,
   usageApi,
 } from "./endpoints";
-import type { CartBuyer, StockAllocation, TenantUserInput } from "./types";
+import type { CartBuyer, StockAllocation, TenantSettings, TenantUserInput } from "./types";
 import { useSetBranding } from "@/components/branding/branding-provider";
 import { resolveBranding } from "@/lib/branding/resolve";
 
@@ -545,6 +545,27 @@ export function useUpdateSettings() {
       setBranding(resolveBranding(res.data));
     },
   });
+}
+
+/** Upload / remove the company logo or favicon; applies the new branding live. */
+export function useBrandAssetMutations() {
+  const qc = useQueryClient();
+  const setBranding = useSetBranding();
+  const onSuccess = (res: { data: TenantSettings }) => {
+    void qc.invalidateQueries({ queryKey: ["settings"] });
+    setBranding(resolveBranding(res.data));
+  };
+  return {
+    upload: useMutation({
+      mutationFn: ({ asset, file }: { asset: "logo" | "favicon"; file: File }) =>
+        settingsApi.uploadAsset(asset, file),
+      onSuccess,
+    }),
+    remove: useMutation({
+      mutationFn: (asset: "logo" | "favicon") => settingsApi.removeAsset(asset),
+      onSuccess,
+    }),
+  };
 }
 
 /* Reports */

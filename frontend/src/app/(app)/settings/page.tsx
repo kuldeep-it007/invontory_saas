@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import { useAuth } from "@/components/providers/auth-provider";
+import { BrandAssetUpload } from "@/components/settings/brand-asset-upload";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/form";
 import { Card, PageHeader, StateMessage } from "@/components/ui/primitives";
@@ -24,8 +25,6 @@ export default function SettingsPage(): JSX.Element {
 
   const [form, setForm] = useState({
     brand_name: "",
-    logo: "",
-    favicon: "",
     color_theme: "",
     custom_domain: "",
     mail_from_address: "",
@@ -50,8 +49,6 @@ export default function SettingsPage(): JSX.Element {
       setThemeId(presetIdFromColorTheme(s.color_theme));
       setForm({
         brand_name: s.brand_name ?? "",
-        logo: s.logo ?? "",
-        favicon: s.favicon ?? "",
         color_theme: s.color_theme ?? "",
         custom_domain: s.custom_domain ?? "",
         mail_from_address: s.mail_from_address ?? "",
@@ -67,8 +64,7 @@ export default function SettingsPage(): JSX.Element {
     try {
       await update.mutateAsync({
         brand_name: form.brand_name || null,
-        logo: form.logo || null,
-        favicon: form.favicon || null,
+        // logo/favicon are uploaded separately and deliberately NOT sent here.
         color_theme: form.color_theme || null,
         custom_domain: form.custom_domain || null,
         mail_from_address: form.mail_from_address || null,
@@ -93,8 +89,8 @@ export default function SettingsPage(): JSX.Element {
           <form onSubmit={submit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Brand name" value={form.brand_name} onChange={(v) => setForm({ ...form, brand_name: v })} />
             <Field label="Custom domain" value={form.custom_domain} onChange={(v) => setForm({ ...form, custom_domain: v })} />
-            <Field label="Logo URL" value={form.logo} onChange={(v) => setForm({ ...form, logo: v })} />
-            <Field label="Favicon URL" value={form.favicon} onChange={(v) => setForm({ ...form, favicon: v })} />
+            <BrandAssetUpload asset="logo" current={data?.data.logo ?? null} canEdit={canEdit} />
+            <BrandAssetUpload asset="favicon" current={data?.data.favicon ?? null} canEdit={canEdit} />
             <div className="space-y-3 sm:col-span-2">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">

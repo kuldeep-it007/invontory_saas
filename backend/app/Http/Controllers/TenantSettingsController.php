@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Services\WhiteLabelService;
+use App\Services\MediaStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -43,6 +44,51 @@ class TenantSettingsController extends Controller
             // Short shared cache: branding rarely changes and every page load
             // asks for it; an update is visible within a minute.
             ->header('Cache-Control', 'public, max-age=60');
+    }
+
+    /**
+     * POST /api/tenant/settings/{asset} — upload the company logo or favicon
+     * (multipart field `file`). Stored on the uploads disk (Oracle Object
+     * Storage); the setting is updated to the new file's URL and the previous
+     * uploaded file, if any, is deleted. Company_Admin only (route).
+     */
+    public function uploadAsset(Request $request, MediaStorage $media, string $asset): JsonResponse
+    {
+        $rules = $asset === 'logo'
+            ? ['required', 'file', 'mimes:png,jpg,jpeg,webp', 'max:1024', 'dimensions:min_width=16,min_height=16,max_width=4096,max_height=4096',
+                // The bytes themselves must be an accepted image (not e.g. a renamed SVG).
+                $media->contentRule(['png', 'jpg', 'webp'], 'The logo must be a PNG, JPEG or WebP image.')]
+            // .ico has no dimension metadata PHP can read, so only type + size.
+            : ['required', 'file', 'mimes:png,ico,webp', 'max:256',
+                $media->contentRule(['png', 'ico', 'webp'], 'The favicon must be a PNG, ICO or WebP image.')];
+
+        $request->validate(['file' => $rules], [
+            'file.mimes' => $asset === 'logo'
+                ? 'The logo must be a PNG, JPEG or WebP image.'
+                : 'The favicon must be a PNG, ICO or WebP image.',
+            'file.max' => $asset === 'logo' ? 'The logo must be smaller than 1 MB.' : 'The favicon must be smaller than 256 KB.',
+            'file.dimensions' => 'The logo must be between 16 and 4096 pixels on each side.',
+        ]);
+
+        $previous = $this->whiteLabel->get()[$asset] ?? null;
+        $url = $media->store($request->file('file'), $asset);
+        $settings = $this->whiteLabel->update([$asset => $url]);
+        $media->deleteUrl($previous);
+
+        return response()->json(['data' => $settings]);
+    }
+
+    /**
+     * DELETE /api/tenant/settings/{asset} — remove the logo or favicon (clears
+     * the setting and deletes the uploaded file). Company_Admin only (route).
+     */
+    public function deleteAsset(MediaStorage $media, string $asset): JsonResponse
+    {
+        $previous = $this->whiteLabel->get()[$asset] ?? null;
+        $settings = $this->whiteLabel->update([$asset => null]);
+        $media->deleteUrl($previous);
+
+        return response()->json(['data' => $settings]);
     }
 
     /**
