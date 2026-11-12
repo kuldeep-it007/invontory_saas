@@ -7,6 +7,7 @@ import { Pagination } from "@/components/ui/form";
 import { pageInfo } from "@/lib/pagination";
 import { Card, Input, Label, PageHeader, StateMessage } from "@/components/ui/primitives";
 import { errorMessage } from "@/lib/api/errors";
+import { useEffectiveAuth } from "@/components/providers/impersonation-provider";
 import { useReport } from "@/lib/api/hooks";
 import { useUrlFilters } from "@/lib/use-url-filters";
 
@@ -40,7 +41,10 @@ function ReportsView(): JSX.Element {
   // The report and date range live in the URL (?report=&from=&to=) so dashboard
   // links, refreshes and the controls stay in sync.
   const { values, setFilters } = useUrlFilters(["report", "from", "to"] as const);
-  const type = REPORT_TYPES.includes(values.report) ? values.report : REPORT_TYPES[0];
+  // Plan usage is tenant-level data; distributors and dealers cannot run it.
+  const { actorKind } = useEffectiveAuth();
+  const reportTypes = actorKind === "company" ? REPORT_TYPES : REPORT_TYPES.filter((t) => t !== "plan-usage");
+  const type = reportTypes.includes(values.report) ? values.report : reportTypes[0];
   const from = /^\d{4}-\d{2}-\d{2}$/.test(values.from) ? values.from : "";
   const to = /^\d{4}-\d{2}-\d{2}$/.test(values.to) ? values.to : "";
   const [page, setPage] = useState(1);
@@ -71,9 +75,9 @@ function ReportsView(): JSX.Element {
               }}
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
             >
-              {REPORT_TYPES.map((t) => (
+              {reportTypes.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {humanizeHeader(t.replace(/-/g, "_"))}
                 </option>
               ))}
             </select>

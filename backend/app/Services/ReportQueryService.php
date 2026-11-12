@@ -283,6 +283,13 @@ class ReportQueryService
                 throw new AuthorizationException('Your account has no report scope.');
             }
 
+            // Plan usage is tenant-level (subscription, party/product/user counts
+            // across the whole tenant). It has no buyer dimension to scope by, so
+            // a Distributor/Dealer must not read it at all.
+            if ($spec->type === ReportType::PLAN_USAGE) {
+                throw new AuthorizationException('Plan usage is only available to company users.');
+            }
+
             return $spec->withFilters(
                 $spec->filters->scopedToBuyer((string) $context->buyerType, (int) $context->buyerId)
             );

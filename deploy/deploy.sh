@@ -41,6 +41,8 @@
 #   ADMIN_NAME     its display name                    (default "Platform Admin")
 #   SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM   optional outgoing mail
 #   APP_DIR        install directory                   (default /opt/inventory)
+#   MYSQL_LOCAL_PORT  server-loopback port MySQL is published on, for SSH-tunnelled
+#                  clients such as SQLyog               (default 3307)
 #
 # DNS / TLS — read this once
 #   Tenants live on subdomains, so you need DNS records pointing at this server:
@@ -372,6 +374,7 @@ APP_DIR=${APP_DIR}
 BACKEND_ENV_FILE=${BACKEND_ENV}
 DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
 REDIS_PASSWORD=${REDIS_PASSWORD}
+MYSQL_LOCAL_PORT=${MYSQL_LOCAL_PORT:-3307}
 EOF
   )
 
@@ -419,6 +422,10 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MYSQL_DATABASE: inventory_central
+    # Loopback ONLY: reachable from the server itself (e.g. through an SSH
+    # tunnel from SQLyog/DBeaver), never from the internet.
+    ports:
+      - "127.0.0.1:${MYSQL_LOCAL_PORT}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ${APP_DIR}/mysql-init:/docker-entrypoint-initdb.d:ro
@@ -767,6 +774,10 @@ ${C_G}${C_B}Deployment complete.${C_0}
     ${BACKEND_ENV}     application configuration
   Daily DB backups     inside the 'app-storage' volume (storage/app/backups); copy them
                        off-server regularly:  docker compose -p ${PROJECT} cp api:/app/storage/app/backups ./backups
+
+  Database (SQLyog etc.): MySQL listens on 127.0.0.1:${MYSQL_LOCAL_PORT:-3307} ON THE SERVER only.
+    Connect through an SSH tunnel -> host 127.0.0.1, port ${MYSQL_LOCAL_PORT:-3307}, user 'inventory',
+    password DB_APP_PASSWORD from ${STATE_FILE}.
 
   Day-2 commands:  sudo $0 update | status | logs [service] | backup
 EOF

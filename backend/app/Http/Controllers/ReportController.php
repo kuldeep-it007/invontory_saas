@@ -58,7 +58,10 @@ class ReportController extends Controller
      */
     public function show(Request $request, string $type): JsonResponse
     {
-        $reportType = ReportType::tryFromValue($type);
+        // URLs spell report names with hyphens (stock-on-hand); the allow-listed
+        // enum values use underscores (stock_on_hand). Accept both at the HTTP
+        // boundary only — the enum and the AI validator stay strict.
+        $reportType = ReportType::tryFromValue(str_replace('-', '_', $type));
 
         if ($reportType === null || ! $this->reports->supports($reportType)) {
             abort(Response::HTTP_NOT_FOUND, sprintf('Unknown report type [%s].', $type));
@@ -198,7 +201,7 @@ class ReportController extends Controller
     private function presentParties(array $rows): array
     {
         $roles = [];
-        foreach (['buyer', 'seller'] as $role) {
+        foreach (['buyer', 'seller', 'owner'] as $role) {
             if ($rows !== [] && array_key_exists($role.'_type', $rows[0]) && array_key_exists($role.'_id', $rows[0])) {
                 $roles[] = $role;
             }
@@ -236,7 +239,10 @@ class ReportController extends Controller
                 }
 
                 if ($role === null) {
-                    $out[$key] = $value;
+                    // Invoice series are stored as "<model class>-<n>"; show the short name.
+                    $out[$key] = (str_ends_with((string) $key, '_series') && is_string($value))
+                        ? preg_replace('/^.*\\\\/', '', $value)
+                        : $value;
                 } elseif ($key === $role.'_type') {
                     $out[$key] = is_string($value) ? class_basename($value) : $value;
                 } else {

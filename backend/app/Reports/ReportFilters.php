@@ -54,7 +54,9 @@ final class ReportFilters
     {
         return new self(
             from: self::toDate($filters['from'] ?? $filters['dateFrom'] ?? null),
-            to: self::toDate($filters['to'] ?? $filters['dateTo'] ?? null),
+            // A date-only "to" (e.g. 2026-11-12) means the END of that day, so the
+            // range is genuinely inclusive as documented.
+            to: self::toDate($filters['to'] ?? $filters['dateTo'] ?? null, endOfDay: true),
             buyerType: self::toStringOrNull($filters['buyerType'] ?? null),
             buyerId: self::toIntOrNull($filters['buyerId'] ?? null),
             sellerType: self::toStringOrNull($filters['sellerType'] ?? null),
@@ -134,7 +136,7 @@ final class ReportFilters
         );
     }
 
-    private static function toDate(mixed $value): ?CarbonImmutable
+    private static function toDate(mixed $value, bool $endOfDay = false): ?CarbonImmutable
     {
         if ($value === null || $value === '') {
             return null;
@@ -148,7 +150,15 @@ final class ReportFilters
             return CarbonImmutable::instance(CarbonImmutable::parse($value->format(DateTimeInterface::ATOM)));
         }
 
-        return CarbonImmutable::parse((string) $value);
+        $parsed = CarbonImmutable::parse((string) $value);
+
+        // Only a bare date (no time component) is widened to the end of the day;
+        // an explicit time such as "2026-11-12 10:00:00" is respected as given.
+        if ($endOfDay && preg_match('/^\d{4}-\d{2}-\d{2}$/', trim((string) $value)) === 1) {
+            return $parsed->endOfDay();
+        }
+
+        return $parsed;
     }
 
     private static function toIntOrNull(mixed $value): ?int

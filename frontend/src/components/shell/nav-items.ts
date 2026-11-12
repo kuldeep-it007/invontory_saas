@@ -36,6 +36,13 @@ export interface NavLink {
    * Used to confine stock/order destinations to the role they belong to.
    */
   actorKinds?: ActorKind[];
+  /** Per-actor label overrides, e.g. a distributor sees "My Stock". */
+  labelByKind?: Partial<Record<ActorKind, string>>;
+}
+
+/** The label to show for a link, honouring any per-actor override. */
+export function navLabel(link: NavLink, actorKind: ActorKind): string {
+  return link.labelByKind?.[actorKind] ?? link.label;
 }
 
 export interface NavSection {
@@ -82,7 +89,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: "/stock/stocks", label: "Stocks Management", icon: "layers", ability: "inventory.view", actorKinds: ["company"] },
       { href: "/stock/low", label: "Low Stock Management Report", icon: "alert", ability: "inventory.view", actorKinds: ["company"] },
       // Distributor-only: a distributor's view of ITS OWN stock.
-      { href: "/stock/distributors", label: "Distributor Stock Management", icon: "box", ability: "inventory.view", actorKinds: ["company", "distributor"] },
+      { href: "/stock/distributors", label: "Distributor Stock Management", labelByKind: { distributor: "My Stock" }, icon: "box", ability: "inventory.view", actorKinds: ["company", "distributor"] },
     ],
   },
   {

@@ -135,7 +135,7 @@ function DistributorStockView(): JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Distributor Stock Management"
+        title={isDistributorUser ? "My Stock" : "Distributor Stock Management"}
         description={
           isDistributorUser
             ? "Your stock on hand. It grows as your orders with the Company are confirmed, and you can add or edit quantities yourself."

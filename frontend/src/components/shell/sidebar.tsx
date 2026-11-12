@@ -9,7 +9,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { useEffectiveAuth } from "@/components/providers/impersonation-provider";
 import { Icon } from "@/components/ui/icons";
 
-import { NAV_SECTIONS, type NavLink, type NavSection } from "./nav-items";
+import { NAV_SECTIONS, navLabel, type NavLink, type NavSection } from "./nav-items";
 
 /**
  * App sidebar (DreamsPOS-style, hierarchical). Renders the brand logo, ability-
@@ -184,6 +184,7 @@ function NavLinkRow({
   nested?: boolean;
 }): JSX.Element {
   const IconComp = Icon[link.icon];
+  const { actorKind } = useEffectiveAuth();
   return (
     <Link
       href={link.href}
@@ -198,7 +199,7 @@ function NavLinkRow({
         size={nested ? 16 : 18}
         className={active ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground"}
       />
-      <span className="truncate">{link.label}</span>
+      <span className="truncate">{navLabel(link, actorKind)}</span>
     </Link>
   );
 }

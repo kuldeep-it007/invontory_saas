@@ -10,7 +10,6 @@ import { Card, Input, Label } from "@/components/ui/primitives";
 import { adminApi, setAdminToken } from "@/lib/api/admin";
 import { authApi } from "@/lib/api/endpoints";
 import { errorMessage } from "@/lib/api/errors";
-import { setToken } from "@/lib/api/token";
 import { ApiError } from "@/lib/api/types";
 
 /**
@@ -30,7 +29,7 @@ import { ApiError } from "@/lib/api/types";
  * console, tenant users land in their workspace.
  */
 export default function LoginPage(): JSX.Element {
-  const { status } = useAuth();
+  const { status, login } = useAuth();
   const router = useRouter();
 
   const [loginValue, setLoginValue] = useState("");
@@ -78,10 +77,12 @@ export default function LoginPage(): JSX.Element {
       }
     }
 
-    // Layer 2: tenant login (resolved by host subdomain).
+    // Layer 2: tenant login (resolved by host subdomain). Go through the auth
+    // provider's login() so its in-memory session (identity + status) is
+    // updated; saving the token alone left the provider "unauthenticated", which
+    // bounced the user back to /login until the page was refreshed.
     try {
-      const tenant = await authApi.login(loginValue, password);
-      setToken(tenant.token);
+      await login(loginValue, password);
       router.replace("/dashboard");
     } catch (err) {
       setError(errorMessage(err));

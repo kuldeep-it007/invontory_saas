@@ -88,10 +88,42 @@ class ReportCache
             return $compute();
         }
 
-        return Cache::remember(
+        // Cache PLAIN data only (rows + total), never the ReportResult object.
+        // Laravel's hardened cache refuses to unserialize objects
+        // (`cache.serializable_classes => false`, a gadget-chain defence), so a
+        // cached object came back as __PHP_Incomplete_Class and every repeated
+        // report request failed with a 500. Rebuilding the result from arrays
+        // keeps that protection on. The test suite's array store never
+        // serializes, which is why this only showed up on Redis.
+        $cached = Cache::remember(
             $this->cacheKey($spec),
             self::TTL_SECONDS,
-            $compute,
+            static function () use ($compute): array {
+                $result = $compute();
+
+                return [
+                    'rows' => $result->rows,
+                    'page' => $result->page,
+                    'per_page' => $result->perPage,
+                    'total' => $result->total,
+                ];
+            },
+        );
+
+        // An entry written by an older build (a serialized object) is unusable;
+        // drop it and compute fresh rather than failing the request.
+        if (! is_array($cached) || ! array_key_exists('rows', $cached)) {
+            Cache::forget($this->cacheKey($spec));
+
+            return $compute();
+        }
+
+        return new ReportResult(
+            rows: $cached['rows'],
+            spec: $spec,
+            page: (int) $cached['page'],
+            perPage: (int) $cached['per_page'],
+            total: $cached['total'] === null ? null : (int) $cached['total'],
         );
     }
 
