@@ -30,7 +30,9 @@ use Spatie\Permission\Traits\HasRoles;
  * - Passwords are stored hashed (bcrypt/argon2) via the `hashed` cast (R7.3).
  */
 #[Fillable(['name', 'email', 'password', 'distributor_id', 'dealer_id'])]
-#[Hidden(['password', 'remember_token'])]
+// `avatar` (an image data URL) is hidden from generic serialization so user
+// lists stay small; the identity payload returns it explicitly.
+#[Hidden(['password', 'remember_token', 'avatar'])]
 class User extends Authenticatable implements Auditable
 {
     /** @use HasFactory<UserFactory> */
@@ -47,6 +49,8 @@ class User extends Authenticatable implements Auditable
     protected $auditExclude = [
         'password',
         'remember_token',
+        // The profile picture is a large blob; never copy it into the audit log.
+        'avatar',
     ];
 
     /**

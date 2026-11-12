@@ -45,6 +45,17 @@ export const authApi = {
   forgotPassword: (email: string) => api.post<{ message: string }>("/forgot-password", { email }),
 };
 
+/* ─── My profile ──────────────────────────────────────────────────────────── */
+export const profileApi = {
+  /** Upload the caller's profile picture (already cropped/resized in the browser). */
+  uploadAvatar: (file: Blob, filename = "avatar.jpg") => {
+    const form = new FormData();
+    form.append("avatar", file, filename);
+    return api.post<Resource<{ avatar: string | null }>>("/me/avatar", form);
+  },
+  removeAvatar: () => api.del<Resource<{ avatar: null }>>("/me/avatar"),
+};
+
 /* ─── Dashboard & usage (R33.1, R5.5) ─────────────────────────────────────── */
 export const dashboardApi = {
   snapshot: (party?: { buyer_type: string; buyer_id: number }) =>

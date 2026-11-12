@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { useAuth } from "@/components/providers/auth-provider";
 import { useNotifications } from "@/lib/api/hooks";
+import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icons";
 
 /**
@@ -55,20 +56,15 @@ export function Topbar(): JSX.Element {
           <Icon.settings size={18} />
         </Link>
 
-        <span
-          className="ml-1 flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
+        <Link
+          href="/profile"
+          aria-label={`My profile (${identity?.name ?? "User"})`}
           title={identity?.name ?? "User"}
+          className="ml-1 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
-          {monogram(identity?.name ?? "U")}
-        </span>
+          <Avatar name={identity?.name ?? "U"} src={identity?.avatar} size={36} />
+        </Link>
       </div>
     </header>
   );
-}
-
-function monogram(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }

@@ -22,7 +22,7 @@ const DEV_TENANT_HOST = process.env.NEXT_PUBLIC_TENANT_HOST ?? null;
 
 export interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
-  /** JSON body — serialized automatically. */
+  /** JSON body — serialized automatically. A FormData body is sent as-is (file upload). */
   body?: unknown;
   /** Query string params; null/undefined entries are dropped. */
   query?: Record<string, string | number | boolean | null | undefined>;
@@ -97,11 +97,13 @@ async function parseError(res: Response): Promise<ApiError> {
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, query, signal } = options;
   const hasBody = body !== undefined && body !== null;
+  // Multipart uploads: let the browser set the Content-Type (with its boundary).
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
 
   const res = await fetch(buildUrl(path, query), {
     method,
-    headers: buildHeaders(hasBody),
-    body: hasBody ? JSON.stringify(body) : undefined,
+    headers: buildHeaders(hasBody && !isForm),
+    body: !hasBody ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
     signal,
   });
 

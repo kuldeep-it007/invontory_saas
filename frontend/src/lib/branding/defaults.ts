@@ -22,6 +22,9 @@ export const DEFAULT_THEME: Required<ThemeTokens> = {
   muted: "210 40% 96%",
   mutedForeground: "215 16% 47%",
   border: "214 32% 91%",
+  card: "0 0% 100%",
+  cardForeground: "222 47% 11%",
+  ring: "222 60% 45%",
   radius: "0.5rem",
 };
 

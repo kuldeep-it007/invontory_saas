@@ -32,6 +32,8 @@ interface AuthState {
   logout: () => Promise<void>;
   can: (ability: string) => boolean;
   hasRole: (role: string) => boolean;
+  /** Update the in-memory identity (e.g. a new profile picture) without a reload. */
+  setAvatar: (avatar: string | null) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -102,9 +104,13 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     [identity],
   );
 
+  const setAvatar = useCallback((avatar: string | null): void => {
+    setIdentity((prev) => (prev ? { ...prev, avatar } : prev));
+  }, []);
+
   const value = useMemo<AuthState>(
-    () => ({ identity, status, login, logout, can, hasRole }),
-    [identity, status, login, logout, can, hasRole],
+    () => ({ identity, status, login, logout, can, hasRole, setAvatar }),
+    [identity, status, login, logout, can, hasRole, setAvatar],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

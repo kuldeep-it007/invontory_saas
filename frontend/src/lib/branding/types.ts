@@ -45,6 +45,9 @@ export interface ThemeTokens {
   muted?: string;
   mutedForeground?: string;
   border?: string;
+  card?: string;
+  cardForeground?: string;
+  ring?: string;
   radius?: string;
 }
 

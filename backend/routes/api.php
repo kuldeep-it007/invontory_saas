@@ -25,6 +25,7 @@ use App\Http\Controllers\PanelController;
 use App\Http\Controllers\PartyImpersonationController;
 use App\Http\Controllers\PriceController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProspectController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
@@ -113,6 +114,10 @@ Route::middleware('tenant.public')->group(function () {
 Route::middleware('tenant')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // The caller's own profile picture (any authenticated user; own record only).
+    Route::post('/me/avatar', [ProfileController::class, 'uploadAvatar']);
+    Route::delete('/me/avatar', [ProfileController::class, 'deleteAvatar']);
 
     /*
     | Buyer-side PANEL (R8.6, R20.1, R20.2, R28.10). What a logged-in

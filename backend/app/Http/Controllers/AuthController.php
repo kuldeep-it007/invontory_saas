@@ -102,6 +102,8 @@ class AuthController extends Controller
             'distributor_id' => $user->distributor_id,
             'dealer_id' => $user->dealer_id,
             'party' => $this->party($user),
+            // Profile picture as an image data URL, or null for the monogram.
+            'avatar' => $user->avatar,
         ];
     }
 

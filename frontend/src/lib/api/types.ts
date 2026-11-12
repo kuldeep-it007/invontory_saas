@@ -76,6 +76,8 @@ export interface Identity {
   dealer_id?: number | null;
   /** Compact buyer-party block for panel auto-scoping, or null. */
   party?: IdentityParty | null;
+  /** Profile picture as an image data URL; null/absent shows the monogram. */
+  avatar?: string | null;
 }
 
 /** A buyer-side panel login user managed under a Distributor or Dealer (R8.6). */

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BrandLogo } from "@/components/branding/brand-logo";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useEffectiveAuth } from "@/components/providers/impersonation-provider";
+import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icons";
 
 import { NAV_SECTIONS, navLabel, type NavLink, type NavSection } from "./nav-items";
@@ -68,17 +69,19 @@ export function Sidebar(): JSX.Element {
 
       <div className="border-t border-border p-3">
         {identity ? (
-          <div className="mb-2 flex items-center gap-3 rounded-lg px-2 py-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-              {monogram(identity.name)}
-            </span>
+          <Link
+            href="/profile"
+            aria-label="My profile"
+            className="mb-2 flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Avatar name={identity.name} src={identity.avatar} size={36} />
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-foreground">{identity.name}</p>
               <p className="truncate text-xs text-muted-foreground">
                 {identity.roles[0] ?? identity.email}
               </p>
             </div>
-          </div>
+          </Link>
         ) : null}
         <button
           onClick={() => void logout()}
@@ -204,12 +207,6 @@ function NavLinkRow({
   );
 }
 
-function monogram(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");

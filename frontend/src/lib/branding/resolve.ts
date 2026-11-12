@@ -28,6 +28,9 @@ function tokensFromObject(obj: Record<string, unknown>): ThemeTokens {
     muted: pick("muted", "--muted"),
     mutedForeground: pick("mutedForeground", "muted-foreground", "--muted-foreground"),
     border: pick("border", "--border"),
+    card: pick("card", "--card"),
+    cardForeground: pick("cardForeground", "card-foreground", "--card-foreground"),
+    ring: pick("ring", "--ring"),
     radius: pick("radius", "--radius"),
   };
 
