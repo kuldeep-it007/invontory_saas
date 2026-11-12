@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\StorageUnavailableException;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -54,10 +55,17 @@ class MediaStorage
         $ext = $this->extensionFor($file);
         $path = sprintf('tenants/%s/%s/%s.%s', $this->tenantId(), $kind, Str::random(32), $ext);
 
-        $this->disk()->put($path, (string) file_get_contents($file->getRealPath()), [
-            'ContentType' => self::TYPES[$ext],
-            'CacheControl' => 'public, max-age=31536000, immutable',
-        ]);
+        try {
+            $this->disk()->put($path, (string) file_get_contents($file->getRealPath()), [
+                'ContentType' => self::TYPES[$ext],
+                'CacheControl' => 'public, max-age=31536000, immutable',
+            ]);
+        } catch (\Throwable $e) {
+            // Log the full error, and tell the admin what storage said
+            // (bucket missing, bad key, wrong region, ...) instead of a bare 500.
+            report($e);
+            throw new StorageUnavailableException($e);
+        }
 
         return self::URL_PREFIX.$path;
     }
