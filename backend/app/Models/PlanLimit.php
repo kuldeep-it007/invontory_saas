@@ -38,6 +38,9 @@ class PlanLimit extends Model
 
     public const MAX_STORAGE_MB = 'max_storage_mb';
 
+    /** Custom domains a tenant may map. Falls back to config('domains.max_per_tenant') when unset. */
+    public const MAX_CUSTOM_DOMAINS = 'max_custom_domains';
+
     /**
      * The documented allow-list of quota keys the platform supports (R4.3).
      * Any key outside this list is not a recognised quota.
@@ -53,6 +56,7 @@ class PlanLimit extends Model
         self::MAX_USERS,
         self::MAX_ORDERS_PER_MONTH,
         self::MAX_STORAGE_MB,
+        self::MAX_CUSTOM_DOMAINS,
     ];
 
     /**

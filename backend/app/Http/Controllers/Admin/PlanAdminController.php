@@ -6,6 +6,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Plan;
+use App\Models\PlatformAuditLog;
+use App\Models\Subscription;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -23,9 +25,15 @@ class PlanAdminController extends Controller
     /** GET /api/admin/plans — all plans with limits + features. */
     public function index(): JsonResponse
     {
-        return response()->json([
-            'data' => Plan::query()->with(['limits', 'features'])->orderBy('id')->get(),
-        ]);
+        // Tenants currently on each plan (latest subscription per tenant).
+        $counts = Subscription::query()
+            ->whereIn('id', Subscription::query()->selectRaw('MAX(id)')->groupBy('tenant_id'))
+            ->selectRaw('plan_id, COUNT(*) as c')->groupBy('plan_id')->pluck('c', 'plan_id');
+
+        $plans = Plan::query()->with(['limits', 'features'])->orderBy('id')->get()
+            ->each(fn (Plan $p) => $p->setAttribute('tenants_count', (int) ($counts[$p->getKey()] ?? 0)));
+
+        return response()->json(['data' => $plans]);
     }
 
     /** GET /api/admin/plans/{plan} */
@@ -49,6 +57,8 @@ class PlanAdminController extends Controller
         $this->syncLimits($plan, $data['limits'] ?? []);
         $this->syncFeatures($plan, $data['features'] ?? []);
 
+        PlatformAuditLog::record('plan.created', $request, null, [], $this->snapshot($plan->load(['limits', 'features'])));
+
         return response()->json(['data' => $plan->load(['limits', 'features'])], 201);
     }
 
@@ -56,6 +66,7 @@ class PlanAdminController extends Controller
     public function update(Request $request, Plan $plan): JsonResponse
     {
         $data = $this->validatePlan($request, updating: true);
+        $before = $this->snapshot($plan->load(['limits', 'features']));
 
         $plan->fill(array_filter(
             [
@@ -74,11 +85,17 @@ class PlanAdminController extends Controller
             $this->syncFeatures($plan, $data['features']);
         }
 
-        return response()->json(['data' => $plan->fresh(['limits', 'features'])]);
+        $fresh = $plan->fresh(['limits', 'features']);
+        $after = $this->snapshot($fresh);
+        if ($after !== $before) {
+            PlatformAuditLog::record('plan.updated', $request, null, $before, $after);
+        }
+
+        return response()->json(['data' => $fresh]);
     }
 
     /** DELETE /api/admin/plans/{plan} — delete a plan (blocked if in use). */
-    public function destroy(Plan $plan): JsonResponse
+    public function destroy(Request $request, Plan $plan): JsonResponse
     {
         if ($plan->subscriptions()->exists()) {
             return response()->json([
@@ -89,11 +106,25 @@ class PlanAdminController extends Controller
             ], 409);
         }
 
+        PlatformAuditLog::record('plan.deleted', $request, null, $this->snapshot($plan->load(['limits', 'features'])));
         $plan->limits()->delete();
         $plan->features()->delete();
         $plan->delete();
 
         return response()->json(['message' => 'Plan deleted.']);
+    }
+
+    /** @return array<string, mixed> */
+    private function snapshot(Plan $plan): array
+    {
+        return [
+            'name' => $plan->name,
+            'price' => (string) $plan->price,
+            'billing_cycle' => $plan->billing_cycle,
+            'is_active' => (bool) $plan->is_active,
+            'limits' => $plan->limits->sortBy('key')->pluck('value', 'key')->all(),
+            'features' => $plan->features->sortBy('key')->pluck('enabled', 'key')->map(fn ($v) => (bool) $v)->all(),
+        ];
     }
 
     /**

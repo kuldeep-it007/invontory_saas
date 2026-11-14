@@ -6,6 +6,7 @@ use App\Http\Middleware\EnsureAiReportingEnabled;
 use App\Http\Middleware\EnsureFeatureEnabled;
 use App\Http\Middleware\EnsureSubscriptionActive;
 use App\Http\Middleware\ReconcileTenantUser;
+use App\Http\Middleware\ResolveTenantByHost;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -13,7 +14,6 @@ use Illuminate\Http\Request;
 use Spatie\Permission\Middleware\PermissionMiddleware;
 use Spatie\Permission\Middleware\RoleMiddleware;
 use Spatie\Permission\Middleware\RoleOrPermissionMiddleware;
-use Stancl\Tenancy\Middleware\InitializeTenancyByDomainOrSubdomain;
 use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -61,7 +61,7 @@ return Application::configure(basePath: dirname(__DIR__))
             // stancl/tenancy identification + connection switching. Resolves
             // the tenant from the subdomain / custom domain and switches the
             // default DB connection to that tenant's database (R1.2).
-            'tenant' => InitializeTenancyByDomainOrSubdomain::class,
+            'tenant' => ResolveTenantByHost::class,
 
             // Rejects tenant routes reached on a central domain (defence in
             // depth alongside the identification middleware).
@@ -111,7 +111,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->group('tenant', [
             'https',
             PreventAccessFromCentralDomains::class,
-            InitializeTenancyByDomainOrSubdomain::class,
+            ResolveTenantByHost::class,
             'auth:sanctum',
             ReconcileTenantUser::class,
         ]);
@@ -130,7 +130,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->group('tenant.public', [
             'https',
             PreventAccessFromCentralDomains::class,
-            InitializeTenancyByDomainOrSubdomain::class,
+            ResolveTenantByHost::class,
         ]);
 
         /*

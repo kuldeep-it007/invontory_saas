@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { useAuth } from "@/components/providers/auth-provider";
 import { BrandAssetUpload } from "@/components/settings/brand-asset-upload";
+import { CustomDomains } from "@/components/settings/custom-domains";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/form";
 import { Card, PageHeader, StateMessage } from "@/components/ui/primitives";
@@ -26,7 +27,6 @@ export default function SettingsPage(): JSX.Element {
   const [form, setForm] = useState({
     brand_name: "",
     color_theme: "",
-    custom_domain: "",
     mail_from_address: "",
     mail_from_name: "",
   });
@@ -50,7 +50,6 @@ export default function SettingsPage(): JSX.Element {
       setForm({
         brand_name: s.brand_name ?? "",
         color_theme: s.color_theme ?? "",
-        custom_domain: s.custom_domain ?? "",
         mail_from_address: s.mail_from_address ?? "",
         mail_from_name: s.mail_from_name ?? "",
       });
@@ -66,7 +65,6 @@ export default function SettingsPage(): JSX.Element {
         brand_name: form.brand_name || null,
         // logo/favicon are uploaded separately and deliberately NOT sent here.
         color_theme: form.color_theme || null,
-        custom_domain: form.custom_domain || null,
         mail_from_address: form.mail_from_address || null,
         mail_from_name: form.mail_from_name || null,
       });
@@ -88,7 +86,6 @@ export default function SettingsPage(): JSX.Element {
         <Card>
           <form onSubmit={submit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Brand name" value={form.brand_name} onChange={(v) => setForm({ ...form, brand_name: v })} />
-            <Field label="Custom domain" value={form.custom_domain} onChange={(v) => setForm({ ...form, custom_domain: v })} />
             <BrandAssetUpload asset="logo" current={data?.data.logo ?? null} canEdit={canEdit} />
             <BrandAssetUpload asset="favicon" current={data?.data.favicon ?? null} canEdit={canEdit} />
             <div className="space-y-3 sm:col-span-2">
@@ -153,6 +150,7 @@ export default function SettingsPage(): JSX.Element {
           </form>
         </Card>
       )}
+      <CustomDomains canEdit={canEdit} />
     </div>
   );
 }

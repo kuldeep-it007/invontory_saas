@@ -52,6 +52,16 @@ export function BrandingProvider({
     applyBrandingToDocument(current);
   }, [current]);
 
+  // A company that picked a primary address is always served from it: visits to its
+  // other addresses (platform subdomain, secondary domains) move there, keeping the path.
+  useEffect(() => {
+    const canonical = current.canonicalHost;
+    if (canonical && window.location.hostname !== canonical && /^[a-z0-9.-]+$/i.test(canonical)) {
+      const { pathname, search, hash } = window.location;
+      window.location.replace(`https://${canonical}${pathname}${search}${hash}`);
+    }
+  }, [current.canonicalHost]);
+
   const value = useMemo(() => current, [current]);
 
   return (

@@ -1,8 +1,10 @@
 <?php
 
 use App\Http\Controllers\Admin\CentralAuthController;
+use App\Http\Controllers\Admin\DomainAdminController;
 use App\Http\Controllers\Admin\ImpersonationController;
 use App\Http\Controllers\Admin\PlanAdminController;
+use App\Http\Controllers\Admin\PlatformAdminController;
 use App\Http\Controllers\Admin\SubscriptionAdminController;
 use App\Http\Controllers\Admin\TenantAdminController;
 use App\Http\Controllers\Admin\TenantProvisioningController;
@@ -15,6 +17,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DealerController;
 use App\Http\Controllers\DeliveryChallanController;
 use App\Http\Controllers\DistributorController;
+use App\Http\Controllers\MediaController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OrderCancellationController;
 use App\Http\Controllers\OrderConfirmationController;
@@ -25,7 +28,6 @@ use App\Http\Controllers\PanelController;
 use App\Http\Controllers\PartyImpersonationController;
 use App\Http\Controllers\PriceController;
 use App\Http\Controllers\ProductController;
-use App\Http\Controllers\MediaController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProspectController;
 use App\Http\Controllers\ReportController;
@@ -33,6 +35,7 @@ use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\StockPointController;
 use App\Http\Controllers\StockTransferController;
+use App\Http\Controllers\TenantDomainController;
 use App\Http\Controllers\TenantSettingsController;
 use App\Http\Controllers\TenantUserController;
 use App\Http\Controllers\UsageController;
@@ -178,6 +181,19 @@ Route::middleware('tenant')->group(function () {
         ->whereIn('asset', ['logo', 'favicon'])
         ->middleware('role:Company_Admin');
 
+    /*
+    | Custom domains (Company_Admin). Map the company's own domain or subdomain
+    | to this workspace: add -> publish DNS records -> verify -> active (HTTPS is
+    | issued automatically once DNS routes here). Mutations are throttled.
+    */
+    Route::middleware('role:Company_Admin')->prefix('/tenant/domains')->group(function () {
+        Route::get('/', [TenantDomainController::class, 'index']);
+        Route::post('/', [TenantDomainController::class, 'store'])->middleware('throttle:20,1');
+        Route::post('/{domain}/verify', [TenantDomainController::class, 'verify'])
+            ->whereNumber('domain')->middleware('throttle:12,1');
+        Route::post('/{domain}/primary', [TenantDomainController::class, 'primary'])->whereNumber('domain');
+        Route::delete('/{domain}', [TenantDomainController::class, 'destroy'])->whereNumber('domain');
+    });
     /*
     | Usage vs active plan limits (R5.5). Reports the active tenant's current
     | resource counts against the plan's limits and backs the dashboard usage
@@ -723,6 +739,9 @@ Route::middleware('platform.public')
     ->prefix('platform')
     ->group(function () {
         Route::post('/login', [CentralAuthController::class, 'login']);
+        // Public platform branding (name/logo/favicon) + the files themselves.
+        Route::get('/branding', [PlatformAdminController::class, 'branding']);
+        Route::get('/media/{path}', [PlatformAdminController::class, 'media'])->where('path', '.*');
     });
 
 /*
@@ -756,6 +775,22 @@ Route::middleware('platform.admin')
             Route::get('/tenants/{tenant}', [TenantAdminController::class, 'show']);
             Route::patch('/tenants/{tenant}', [TenantAdminController::class, 'update']);
             Route::delete('/tenants/{tenant}', [TenantAdminController::class, 'destroy']);
+            // ── Custom domains: cross-tenant oversight + kill switch ───────────
+            Route::get('/domains', [DomainAdminController::class, 'index']);
+            Route::post('/domains/{domain}/disable', [DomainAdminController::class, 'disable'])->whereNumber('domain');
+            Route::post('/domains/{domain}/enable', [DomainAdminController::class, 'enable'])->whereNumber('domain');
+            Route::post('/tenants/{tenant}/plan', [TenantAdminController::class, 'changePlan']);
+            Route::get('/tenants/{tenant}/history', [TenantAdminController::class, 'history']);
+            Route::get('/usage', [TenantAdminController::class, 'usage']);
+
+            // ── Platform admin profile, settings/branding, audit trail ──────
+            Route::get('/profile', [PlatformAdminController::class, 'profile']);
+            Route::patch('/profile', [PlatformAdminController::class, 'updateProfile']);
+            Route::get('/settings', [PlatformAdminController::class, 'settings']);
+            Route::patch('/settings', [PlatformAdminController::class, 'updateSettings']);
+            Route::post('/settings/{asset}', [PlatformAdminController::class, 'uploadAsset']);
+            Route::delete('/settings/{asset}', [PlatformAdminController::class, 'deleteAsset']);
+            Route::get('/audit-logs', [PlatformAdminController::class, 'auditLogs']);
 
             // ── Plans + limits + features (R4) ────────────────────────────
             Route::get('/plans', [PlanAdminController::class, 'index']);

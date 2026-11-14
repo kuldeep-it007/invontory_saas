@@ -36,6 +36,9 @@ class PlanFeature extends Model
 
     public const AI_REPORTS = 'ai_reports';
 
+    /** Custom domain mapping. Unlike other flags it is ON unless a plan row disables it. */
+    public const CUSTOM_DOMAINS = 'custom_domains';
+
     /**
      * The documented allow-list of feature flags the platform supports (R4.5).
      * Any key outside this list is not a recognised feature flag.
@@ -49,6 +52,7 @@ class PlanFeature extends Model
         self::EXPORTS,
         self::API_ACCESS,
         self::AI_REPORTS,
+        self::CUSTOM_DOMAINS,
     ];
 
     /**

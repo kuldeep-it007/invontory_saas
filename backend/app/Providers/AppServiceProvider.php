@@ -18,10 +18,12 @@ use App\Reports\ReportDefinition;
 use App\Services\ReportCache;
 use App\Services\ReportExportService;
 use App\Services\ReportQueryService;
+use App\Tenancy\ActiveDomainTenantResolver;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
 use Stancl\Tenancy\Middleware\InitializeTenancyBySubdomain;
+use Stancl\Tenancy\Resolvers\DomainTenantResolver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -32,6 +34,19 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->registerReportQueryLayer();
         $this->registerReportExportLayer();
+        $this->registerTenantHostResolver();
+    }
+
+    /**
+     * Resolve tenants by exact host through ACTIVE domain rows only, with a short
+     * cache that Domain invalidates whenever a row changes.
+     */
+    private function registerTenantHostResolver(): void
+    {
+        $this->app->bind(DomainTenantResolver::class, ActiveDomainTenantResolver::class);
+
+        DomainTenantResolver::$shouldCache = (bool) config('domains.resolver_cache');
+        DomainTenantResolver::$cacheTTL = (int) config('domains.resolver_cache_ttl');
     }
 
     /**

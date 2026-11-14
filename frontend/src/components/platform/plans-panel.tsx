@@ -91,7 +91,8 @@ export function PlansPanel(): JSX.Element {
                 <div>
                   <h3 className="font-medium text-foreground">{p.name}</h3>
                   <p className="text-sm text-muted-foreground">
-                    {Number(p.price).toFixed(2)} / {p.billing_cycle}
+                    {Number(p.price).toFixed(2)} / {p.billing_cycle} · {p.tenants_count ?? 0}{" "}
+                    {p.tenants_count === 1 ? "tenant" : "tenants"}
                   </p>
                 </div>
                 <Badge>{p.is_active ? "active" : "inactive"}</Badge>

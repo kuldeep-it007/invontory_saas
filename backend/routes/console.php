@@ -30,3 +30,16 @@ Schedule::command('db:backup')
     ->withoutOverlapping()
     ->onOneServer()
     ->runInBackground();
+
+/*
+|--------------------------------------------------------------------------
+| Custom domain DNS verification
+|--------------------------------------------------------------------------
+| Queues DNS checks for pending custom domains (5-minute cadence for the first
+| hour, then hourly) and the daily ownership/routing re-check of active ones.
+*/
+Schedule::command('domains:verify-pending')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();

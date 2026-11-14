@@ -22,6 +22,8 @@ export interface TenantSettings {
   custom_domain: string | null;
   mail_from_address: string | null;
   mail_from_name: string | null;
+  /** Public branding only: the company's primary address, when it has chosen one. */
+  canonical_host?: string | null;
 }
 
 /** The backend envelope wrapping the settings object. */
@@ -57,4 +59,6 @@ export interface Branding {
   logo: string | null;
   favicon: string | null;
   theme: ThemeTokens;
+  /** Host other addresses should redirect to; absent when no primary address is set. */
+  canonicalHost?: string;
 }

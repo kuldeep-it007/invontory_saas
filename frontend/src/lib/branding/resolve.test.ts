@@ -48,3 +48,24 @@ describe("resolveBranding", () => {
     });
   });
 });
+
+describe("resolveBranding canonical host", () => {
+  const base = {
+    logo: null,
+    brand_name: null,
+    color_theme: null,
+    favicon: null,
+    custom_domain: null,
+    mail_from_address: null,
+    mail_from_name: null,
+  };
+
+  it("carries the primary address so other hosts can redirect to it", () => {
+    expect(resolveBranding({ ...base, canonical_host: "orders.example.com" }).canonicalHost).toBe("orders.example.com");
+  });
+
+  it("leaves canonicalHost out when no primary address is set", () => {
+    expect(resolveBranding({ ...base, canonical_host: null })).not.toHaveProperty("canonicalHost");
+    expect(resolveBranding(base)).not.toHaveProperty("canonicalHost");
+  });
+});

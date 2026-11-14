@@ -3,12 +3,12 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\EnforceHttps;
+use App\Http\Middleware\ResolveTenantByHost;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Spatie\Permission\Middleware\PermissionMiddleware;
 use Spatie\Permission\Middleware\RoleMiddleware;
 use Spatie\Permission\Middleware\RoleOrPermissionMiddleware;
-use Stancl\Tenancy\Middleware\InitializeTenancyByDomainOrSubdomain;
 use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
@@ -57,7 +57,7 @@ it('registers the pipeline middleware aliases', function () {
     expect($aliases)->toHaveKey('https')
         ->and($aliases['https'])->toBe(EnforceHttps::class)
         ->and($aliases)->toHaveKey('tenant')
-        ->and($aliases['tenant'])->toBe(InitializeTenancyByDomainOrSubdomain::class)
+        ->and($aliases['tenant'])->toBe(ResolveTenantByHost::class)
         ->and($aliases)->toHaveKey('tenant.prevent-central')
         ->and($aliases['tenant.prevent-central'])->toBe(PreventAccessFromCentralDomains::class)
         ->and($aliases)->toHaveKey('role')
@@ -76,7 +76,7 @@ it('orders the tenant pipeline as HTTPS → tenancy init → Sanctum (R36.1, R1.
 
     $httpsPos = array_search(EnforceHttps::class, $mw, true);
     $preventPos = array_search(PreventAccessFromCentralDomains::class, $mw, true);
-    $initPos = array_search(InitializeTenancyByDomainOrSubdomain::class, $mw, true);
+    $initPos = array_search(ResolveTenantByHost::class, $mw, true);
     $authPos = array_search('Illuminate\Auth\Middleware\Authenticate:sanctum', $mw, true);
 
     // Each stage is present...
@@ -107,7 +107,7 @@ it('orders the platform.admin pipeline as HTTPS → Sanctum → RBAC with NO ten
 
     // Central routes must NOT initialize tenancy — they operate against the
     // central database for cross-tenant/platform work (R1.6).
-    expect($mw)->not->toContain(InitializeTenancyByDomainOrSubdomain::class)
+    expect($mw)->not->toContain(ResolveTenantByHost::class)
         ->and($mw)->not->toContain(PreventAccessFromCentralDomains::class);
 });
 
@@ -115,7 +115,7 @@ it('does not pipeline the health probe (reachable without TLS/tenant/auth)', fun
     $mw = resolvedMiddlewareForUri('GET', 'api/health');
 
     expect($mw)->not->toContain(EnforceHttps::class)
-        ->and($mw)->not->toContain(InitializeTenancyByDomainOrSubdomain::class)
+        ->and($mw)->not->toContain(ResolveTenantByHost::class)
         ->and($mw)->not->toContain('Illuminate\Auth\Middleware\Authenticate:sanctum');
 
     // And it responds OK.

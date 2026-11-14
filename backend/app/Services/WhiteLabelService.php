@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Mail\AppliesTenantSender;
 use App\Models\Company;
+use App\Models\Domain;
 use App\Models\TenantSetting;
 use App\Support\AuditRecorder;
 use Illuminate\Support\Facades\DB;
@@ -137,7 +138,7 @@ class WhiteLabelService
      * When no brand name is configured, the tenant's Company name is used, so a
      * workspace is always labelled with the company it belongs to.
      *
-     * @return array{brand_name: string|null, logo: string|null, favicon: string|null, color_theme: string|null}
+     * @return array{brand_name: string|null, logo: string|null, favicon: string|null, color_theme: string|null, canonical_host: string|null}
      */
     public function publicBranding(): array
     {
@@ -153,6 +154,15 @@ class WhiteLabelService
             'logo' => $settings['logo'],
             'favicon' => $settings['favicon'],
             'color_theme' => $settings['color_theme'],
+            // Browser redirects other hosts here when the company picked a primary address.
+            // Only a host that is healthy right now qualifies, so a broken domain can never
+            // redirect visitors away from the company's working addresses.
+            'canonical_host' => Domain::query()->active()
+                ->where('tenant_id', tenant('id'))
+                ->where('is_primary', true)
+                ->where(fn ($query) => $query->where('type', Domain::TYPE_PLATFORM)
+                    ->orWhere(fn ($custom) => $custom->where('routing_ok', true)->where('ssl_status', Domain::SSL_ISSUED)))
+                ->value('domain'),
         ];
     }
 

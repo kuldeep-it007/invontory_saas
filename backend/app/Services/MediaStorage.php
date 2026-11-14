@@ -50,10 +50,46 @@ class MediaStorage
      * Store an already-validated upload for the active tenant and return the
      * URL to save on the record (e.g. the `logo` setting).
      */
+    public const PLATFORM_URL_PREFIX = '/api/platform/media/';
+
     public function store(UploadedFile $file, string $kind): string
     {
+        return $this->put($file, sprintf('tenants/%s/%s', $this->tenantId(), $kind), self::URL_PREFIX);
+    }
+
+    /** Store a Platform_Admin asset (logo/favicon) outside any tenant prefix. */
+    public function storePlatform(UploadedFile $file, string $kind): string
+    {
+        return $this->put($file, 'platform/'.$kind, self::PLATFORM_URL_PREFIX);
+    }
+
+    public function isValidPlatformPath(string $path): bool
+    {
+        $exts = implode('|', array_keys(self::TYPES));
+
+        return preg_match('#^platform/(logo|favicon)/[A-Za-z0-9]{32}\.('.$exts.')$#', $path) === 1;
+    }
+
+    public function deletePlatformUrl(?string $url): void
+    {
+        if ($url === null || ! str_starts_with($url, self::PLATFORM_URL_PREFIX)) {
+            return;
+        }
+        $path = substr($url, strlen(self::PLATFORM_URL_PREFIX));
+        if (! $this->isValidPlatformPath($path)) {
+            return;
+        }
+        try {
+            $this->disk()->delete($path);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    private function put(UploadedFile $file, string $dir, string $urlPrefix): string
+    {
         $ext = $this->extensionFor($file);
-        $path = sprintf('tenants/%s/%s/%s.%s', $this->tenantId(), $kind, Str::random(32), $ext);
+        $path = sprintf('%s/%s.%s', $dir, Str::random(32), $ext);
 
         try {
             $this->disk()->put($path, (string) file_get_contents($file->getRealPath()), [
@@ -67,7 +103,7 @@ class MediaStorage
             throw new StorageUnavailableException($e);
         }
 
-        return self::URL_PREFIX.$path;
+        return $urlPrefix.$path;
     }
 
     /**

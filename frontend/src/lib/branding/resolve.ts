@@ -125,5 +125,6 @@ export function resolveBranding(settings: TenantSettings | null): Branding {
     logo: settings.logo && settings.logo.trim() !== "" ? settings.logo.trim() : null,
     favicon: settings.favicon && settings.favicon.trim() !== "" ? settings.favicon.trim() : null,
     theme: parseColorTheme(settings.color_theme),
+    ...(settings.canonical_host ? { canonicalHost: settings.canonical_host } : {}),
   };
 }
