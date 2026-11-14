@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { BrandAssetUpload } from "@/components/settings/brand-asset-upload";
 import { CustomDomains } from "@/components/settings/custom-domains";
+import { TenantIntegrations } from "@/components/settings/tenant-integrations";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/form";
 import { Card, PageHeader, StateMessage } from "@/components/ui/primitives";
@@ -151,6 +152,7 @@ export default function SettingsPage(): JSX.Element {
         </Card>
       )}
       <CustomDomains canEdit={canEdit} />
+      <TenantIntegrations canEdit={canEdit} />
     </div>
   );
 }

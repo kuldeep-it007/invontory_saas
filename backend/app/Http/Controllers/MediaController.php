@@ -28,7 +28,10 @@ class MediaController extends Controller
         }
 
         $disk = $this->media->disk();
-
+        if (! $disk->exists($path) && $this->media->usesTenantStorage()) {
+            // Not copied into the tenant bucket (yet): fall back to the platform disk.
+            $disk = $this->media->platformDisk();
+        }
         if (! $disk->exists($path)) {
             abort(404);
         }

@@ -36,6 +36,7 @@ use App\Http\Controllers\StockController;
 use App\Http\Controllers\StockPointController;
 use App\Http\Controllers\StockTransferController;
 use App\Http\Controllers\TenantDomainController;
+use App\Http\Controllers\TenantIntegrationController;
 use App\Http\Controllers\TenantSettingsController;
 use App\Http\Controllers\TenantUserController;
 use App\Http\Controllers\UsageController;
@@ -180,6 +181,21 @@ Route::middleware('tenant')->group(function () {
     Route::delete('/tenant/settings/{asset}', [TenantSettingsController::class, 'deleteAsset'])
         ->whereIn('asset', ['logo', 'favicon'])
         ->middleware('role:Company_Admin');
+
+        /*
+    | Tenant-owned SMTP server and object storage (Company_Admin). Test-then-save;
+    | secrets are write-only and never returned. Tests are throttled because they
+    | open outbound connections.
+    */
+    Route::middleware('role:Company_Admin')->prefix('/tenant/integrations')->group(function () {
+        Route::get('/', [TenantIntegrationController::class, 'index']);
+        Route::put('/{type}', [TenantIntegrationController::class, 'update'])
+            ->whereIn('type', ['smtp', 'storage'])->middleware('throttle:20,1');
+        Route::post('/{type}/test', [TenantIntegrationController::class, 'test'])
+            ->whereIn('type', ['smtp', 'storage'])->middleware('throttle:10,1');
+        Route::delete('/{type}', [TenantIntegrationController::class, 'destroy'])
+            ->whereIn('type', ['smtp', 'storage']);
+    });
 
     /*
     | Custom domains (Company_Admin). Map the company's own domain or subdomain
@@ -686,6 +702,10 @@ Route::middleware('tenant')->group(function () {
 
     Route::post('/reports/schedule', [ReportExportController::class, 'schedule'])
         ->middleware(['permission:reports.view', 'feature:exports']);
+
+Route::get('/reports/exports/{export}/download', [ReportExportController::class, 'download'])
+    ->whereNumber('export')
+    ->middleware(['permission:reports.view', 'feature:exports']);
 
     /*
     | AI natural-language reporting (R30.6, R30.7, R31). A single endpoint maps

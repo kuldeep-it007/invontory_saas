@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Exceptions\StorageUnavailableException;
+use App\Services\TenantIntegrations\IntegrationConfig;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -41,9 +42,27 @@ class MediaStorage
         'ico' => 'image/x-icon',
     ];
 
+    /**
+     * The disk uploads are written to: the tenant's own bucket when it has one
+     * switched on, otherwise the platform uploads disk. Platform-admin assets are
+     * stored outside any tenant, so they always use the platform disk.
+     */
     public function disk(): Filesystem
     {
+        return $this->usesTenantStorage() ? Storage::disk(IntegrationConfig::DISK) : $this->platformDisk();
+    }
+
+    /** The platform's own uploads disk (UPLOADS_DISK). */
+    public function platformDisk(): Filesystem
+    {
         return Storage::disk((string) config('filesystems.uploads_disk', 'uploads_local'));
+    }
+
+    public function usesTenantStorage(): bool
+    {
+        return function_exists('tenancy')
+            && tenancy()->initialized
+            && config('filesystems.disks.'.IntegrationConfig::DISK) !== null;
     }
 
     /**
@@ -119,11 +138,14 @@ class MediaStorage
             return;
         }
 
-        try {
-            $this->disk()->delete($path);
-        } catch (\Throwable $e) {
-            // An orphaned object is harmless; never fail the user's request.
-            report($e);
+        // After a copy into the tenant bucket the file exists on both disks.
+        foreach ($this->usesTenantStorage() ? [$this->disk(), $this->platformDisk()] : [$this->disk()] as $disk) {
+            try {
+                $disk->delete($path);
+            } catch (\Throwable $e) {
+                // An orphaned object is harmless; never fail the user's request.
+                report($e);
+            }
         }
     }
 

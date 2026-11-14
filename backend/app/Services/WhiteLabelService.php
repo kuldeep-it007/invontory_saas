@@ -179,6 +179,12 @@ class WhiteLabelService
      */
     public function senderIdentity(): array
     {
+        // With the tenant's own SMTP active, its authenticated sender wins: SMTP servers
+        // reject a From address the account is not allowed to use.
+        if (config('integrations.smtp_active')) {
+            return ['address' => config('mail.from.address'), 'name' => config('mail.from.name')];
+        }
+
         $settings = $this->get();
 
         return [

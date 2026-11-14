@@ -39,6 +39,11 @@ class PlanFeature extends Model
     /** Custom domain mapping. Unlike other flags it is ON unless a plan row disables it. */
     public const CUSTOM_DOMAINS = 'custom_domains';
 
+    /** Tenant-owned SMTP server and object storage. Like custom domains, ON unless a plan row disables them. */
+    public const CUSTOM_SMTP = 'custom_smtp';
+
+    public const CUSTOM_STORAGE = 'custom_storage';
+
     /**
      * The documented allow-list of feature flags the platform supports (R4.5).
      * Any key outside this list is not a recognised feature flag.
@@ -53,6 +58,8 @@ class PlanFeature extends Model
         self::API_ACCESS,
         self::AI_REPORTS,
         self::CUSTOM_DOMAINS,
+        self::CUSTOM_SMTP,
+        self::CUSTOM_STORAGE,
     ];
 
     /**

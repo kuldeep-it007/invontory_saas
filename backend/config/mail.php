@@ -65,6 +65,14 @@ return [
             'transport' => 'resend',
         ],
 
+        // Mailgun HTTP API. Credentials live in config/services.php (MAILGUN_*).
+        'mailgun' => [
+            'transport' => 'mailgun',
+            // 'client' => [
+            //     'timeout' => 5,
+            // ],
+        ],
+
         'sendmail' => [
             'transport' => 'sendmail',
             'path' => env('MAIL_SENDMAIL_PATH', '/usr/sbin/sendmail -bs -i'),

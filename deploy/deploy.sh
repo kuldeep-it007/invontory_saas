@@ -41,7 +41,9 @@
 #   LE_EMAIL       email for Let's Encrypt expiry notices
 #   ADMIN_EMAIL    first Platform Admin login          (default admin@DOMAIN)
 #   ADMIN_NAME     its display name                    (default "Platform Admin")
-#   SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM   optional outgoing mail
+#   MAILGUN_DOMAIN MAILGUN_SECRET MAILGUN_ENDPOINT MAILGUN_FROM   outgoing mail via Mailgun
+#                  (MAILGUN_DOMAIN = verified sending domain; ENDPOINT api.eu.mailgun.net for EU accounts)
+#   SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM   or plain SMTP instead (blank = log only)
 #   OCI_BUCKET OCI_NAMESPACE OCI_REGION OCI_ACCESS_KEY_ID OCI_SECRET_ACCESS_KEY
 #                  optional Oracle Object Storage for uploads (blank bucket = local disk)
 #   APP_DIR        install directory                   (default /opt/inventory)
@@ -292,12 +294,22 @@ prepare_secrets() {
   ensure_secret ADMIN_PASSWORD   "$(gen_hex 10)"
   ask ADMIN_EMAIL "First Platform Admin email" "admin@${DOMAIN}"
   ask ADMIN_NAME  "First Platform Admin name"  "Platform Admin"
-  ask_opt SMTP_HOST "SMTP host for outgoing email (blank = log only)"
-  if [ -n "${SMTP_HOST:-}" ]; then
-    ask SMTP_PORT "SMTP port" "587"
-    ask_opt SMTP_USER "SMTP username"
-    ask_opt SMTP_PASSWORD "SMTP password" secret
-    ask SMTP_FROM "From address" "no-reply@${DOMAIN}"
+  # Outgoing mail: Mailgun (preferred) or plain SMTP; neither = log only.
+  ask_opt MAILGUN_DOMAIN "Mailgun sending domain, e.g. mg.${DOMAIN} (blank = use SMTP / log only)"
+  if [ -n "${MAILGUN_DOMAIN:-}" ]; then
+    ask MAILGUN_SECRET "Mailgun private API key" "" secret
+    # The key is kept in the 0600 state file so re-runs and 'update' don't lose it.
+    set_state MAILGUN_SECRET "$MAILGUN_SECRET"
+    ask MAILGUN_ENDPOINT "Mailgun API endpoint (api.eu.mailgun.net for EU accounts)" "api.mailgun.net"
+    ask MAILGUN_FROM "From address (must belong to the sending domain)" "no-reply@${MAILGUN_DOMAIN}"
+  else
+    ask_opt SMTP_HOST "SMTP host for outgoing email (blank = log only)"
+    if [ -n "${SMTP_HOST:-}" ]; then
+      ask SMTP_PORT "SMTP port" "587"
+      ask_opt SMTP_USER "SMTP username"
+      ask_opt SMTP_PASSWORD "SMTP password" secret
+      ask SMTP_FROM "From address" "no-reply@${DOMAIN}"
+    fi
   fi
   # Uploaded files (logo, favicon, profile pictures). Blank = local disk in the
   # app-storage volume. The bucket must already exist and should stay PRIVATE:
@@ -324,7 +336,13 @@ write_runtime_files() {
 
   # Backend .env (mounted read-only into the containers as /app/.env).
   local mail_block
-  if [ -n "${SMTP_HOST:-}" ]; then
+  if [ -n "${MAILGUN_DOMAIN:-}" ]; then
+    mail_block="MAIL_MAILER=mailgun
+MAILGUN_DOMAIN=$(env_quote "$MAILGUN_DOMAIN")
+MAILGUN_SECRET=$(env_quote "${MAILGUN_SECRET:-}")
+MAILGUN_ENDPOINT=$(env_quote "${MAILGUN_ENDPOINT:-api.mailgun.net}")
+MAIL_FROM_ADDRESS=$(env_quote "${MAILGUN_FROM:-no-reply@${MAILGUN_DOMAIN}}")"
+  elif [ -n "${SMTP_HOST:-}" ]; then
     mail_block="MAIL_MAILER=smtp
 MAIL_HOST=$(env_quote "$SMTP_HOST")
 MAIL_PORT=${SMTP_PORT:-587}

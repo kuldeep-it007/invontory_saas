@@ -14,6 +14,15 @@ return [
     |
     */
 
+    // Mailgun (MAIL_MAILER=mailgun). MAILGUN_DOMAIN is the verified sending domain;
+    // use MAILGUN_ENDPOINT=api.eu.mailgun.net for EU-region accounts.
+    'mailgun' => [
+        'domain' => env('MAILGUN_DOMAIN'),
+        'secret' => env('MAILGUN_SECRET'),
+        'endpoint' => env('MAILGUN_ENDPOINT', 'api.mailgun.net'),
+        'scheme' => 'https',
+    ],
+
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],

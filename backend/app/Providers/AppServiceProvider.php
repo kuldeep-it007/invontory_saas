@@ -18,6 +18,7 @@ use App\Reports\ReportDefinition;
 use App\Services\ReportCache;
 use App\Services\ReportExportService;
 use App\Services\ReportQueryService;
+use App\Services\TenantIntegrations\TenantExportStorage;
 use App\Tenancy\ActiveDomainTenantResolver;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
@@ -67,6 +68,7 @@ class AppServiceProvider extends ServiceProvider
             return new ReportExportService(
                 $app->make(ReportQueryService::class),
                 $app->make(ReportExportWriterFactory::class),
+                $app->make(TenantExportStorage::class),
             );
         });
     }

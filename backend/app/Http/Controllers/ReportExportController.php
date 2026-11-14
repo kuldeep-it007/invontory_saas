@@ -4,17 +4,22 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Auth\Roles;
+use App\Models\ReportExport;
 use App\Models\ReportSchedule;
 use App\Reports\ExportFormat;
 use App\Reports\ReportAccessContext;
 use App\Reports\ReportQuerySpec;
 use App\Reports\ReportType;
 use App\Services\ReportExportService;
+use App\Services\TenantIntegrations\TenantExportStorage;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Export + scheduled/subscription report HTTP surface (R29.4, R29.5, R29.6):
@@ -85,6 +90,40 @@ class ReportExportController extends Controller
                 'download_url' => $export->download_url,
             ],
         ], $completed ? Response::HTTP_CREATED : Response::HTTP_ACCEPTED);
+    }
+
+    /**
+     * GET /api/reports/exports/{export}/download - stream a finished export.
+     *
+     * Files live either in the tenant's own bucket (	enants/<id>/...) or, for
+     * tenants without one, on the local disk. Only the person who requested the
+     * export, or a Company_Admin, may download it; anyone else gets a 404 so the
+     * existence of other people's exports is not revealed.
+     */
+    public function download(Request $request, TenantExportStorage $storage, int $export): StreamedResponse
+    {
+        $record = ReportExport::query()->findOrFail($export);
+        $user = $request->user();
+        $allowed = $user !== null
+            && ($this->principalId($request) === $record->requested_by || $user->hasRole(Roles::COMPANY_ADMIN));
+
+        if (! $allowed || ! $record->isCompleted() || $record->file_path === null) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $path = $record->file_path;
+        if ($storage->owns($path)) {
+            $disk = $storage->active() ? $storage->disk() : null;
+        } else {
+            // Legacy file on the local disk; only our own export folder is ever served.
+            $disk = str_starts_with($path, 'exports/reports/') && ! str_contains($path, '..') ? Storage::disk('local') : null;
+        }
+
+        if ($disk === null || ! $disk->exists($path)) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        return $disk->download($path, basename($path), ['Content-Type' => $record->format()->mimeType()]);
     }
 
     /**

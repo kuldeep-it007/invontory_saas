@@ -50,6 +50,10 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep function arguments out of stack traces. Without this a logged exception from the
+# SMTP / S3 client could carry the first characters of a tenant's password or secret key.
+RUN printf 'zend.exception_ignore_args=On\n' > "$PHP_INI_DIR/conf.d/zz-exception-args.ini"
+
 WORKDIR /app
 
 # App code + installed vendor tree from stage 1.

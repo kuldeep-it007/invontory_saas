@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\Domain;
 use App\Models\Tenant;
+use App\Tenancy\TenantIntegrationsBootstrapper;
 
 return [
     'tenant_model' => Tenant::class,
@@ -35,6 +36,8 @@ return [
         Stancl\Tenancy\Bootstrappers\CacheTenancyBootstrapper::class,
         Stancl\Tenancy\Bootstrappers\FilesystemTenancyBootstrapper::class,
         Stancl\Tenancy\Bootstrappers\QueueTenancyBootstrapper::class,
+        // Tenant-owned SMTP server and object storage (falls back to the platform's).
+        TenantIntegrationsBootstrapper::class,
         // Stancl\Tenancy\Bootstrappers\RedisTenancyBootstrapper::class, // Note: phpredis is needed
     ],
 

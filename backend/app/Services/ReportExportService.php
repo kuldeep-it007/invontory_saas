@@ -15,6 +15,8 @@ use App\Reports\ExportStatus;
 use App\Reports\ReportAccessContext;
 use App\Reports\ReportQuerySpec;
 use App\Reports\ReportType;
+use App\Services\TenantIntegrations\IntegrationConfig;
+use App\Services\TenantIntegrations\TenantExportStorage;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Mail;
@@ -70,6 +72,7 @@ class ReportExportService
     public function __construct(
         private readonly ReportQueryService $reports,
         private readonly ReportExportWriterFactory $writers,
+        private readonly TenantExportStorage $tenantStorage,
     ) {}
 
     /**
@@ -162,7 +165,13 @@ class ReportExportService
                 $meta,
             );
 
-            $downloadUrl = $this->downloadUrl($disk, $relativePath);
+            if ($this->tenantStorage->active()) {
+                // The tenant has its own bucket: move the finished file there.
+                $relativePath = $this->tenantStorage->publish($absolutePath, $relativePath);
+                $downloadUrl = TenantExportStorage::downloadUrl($export->id);
+            } else {
+                $downloadUrl = $this->downloadUrl($disk, $relativePath);
+            }
 
             $export->update([
                 'status' => ExportStatus::COMPLETED->value,
@@ -310,8 +319,9 @@ class ReportExportService
             return;
         }
 
-        $absolutePath = $this->absolutePath($this->disk(), $export->file_path);
-
+        // A file in the tenant bucket is attached straight from there.
+        $inBucket = $this->tenantStorage->owns($export->file_path);
+        $absolutePath = $inBucket ? $export->file_path : $this->absolutePath($this->disk(), $export->file_path);
         $mail = new ScheduledReportMail(
             reportLabel: $schedule->name ?? $schedule->report_type,
             reportType: $schedule->report_type,
@@ -320,8 +330,8 @@ class ReportExportService
             periodFrom: $spec->filters->withDefaultDateRange($relativeTo)->from?->toIso8601String(),
             periodTo: $spec->filters->withDefaultDateRange($relativeTo)->to?->toIso8601String(),
             rowCount: $export->row_count,
+            storageDisk: $inBucket ? IntegrationConfig::DISK : null,
         );
-
         Mail::to($recipients)->queue($mail);
     }
 

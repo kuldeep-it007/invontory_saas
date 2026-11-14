@@ -38,6 +38,7 @@ class ScheduledReportMail extends Mailable implements ShouldQueue
      * @param  string|null  $periodFrom  Resolved period start (ISO8601) for the body.
      * @param  string|null  $periodTo  Resolved period end (ISO8601) for the body.
      * @param  int  $rowCount  Number of rows in the report.
+     * @param  string|null  $storageDisk  When set, $filePath is a key on this storage disk (the tenant's bucket) rather than a local path.
      */
     public function __construct(
         public readonly string $reportLabel,
@@ -47,6 +48,7 @@ class ScheduledReportMail extends Mailable implements ShouldQueue
         public readonly ?string $periodFrom = null,
         public readonly ?string $periodTo = null,
         public readonly int $rowCount = 0,
+        public readonly ?string $storageDisk = null,
     ) {}
 
     public function envelope(): Envelope
@@ -76,7 +78,9 @@ class ScheduledReportMail extends Mailable implements ShouldQueue
     public function attachments(): array
     {
         return [
-            Attachment::fromPath($this->filePath)
+            ($this->storageDisk !== null
+                ? Attachment::fromStorageDisk($this->storageDisk, $this->filePath)
+                : Attachment::fromPath($this->filePath))
                 ->as(sprintf('%s.%s', $this->reportType, $this->format->extension()))
                 ->withMime($this->format->mimeType()),
         ];
