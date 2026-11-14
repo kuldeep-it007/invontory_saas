@@ -39,15 +39,16 @@ class AppServiceProvider extends ServiceProvider
     }
 
     /**
-     * Resolve tenants by exact host through ACTIVE domain rows only, with a short
-     * cache that Domain invalidates whenever a row changes.
+     * Resolve tenants by host through ACTIVE domain rows only.
+     *
+     * Not cached: stancl's resolver cache stores the Tenant model itself, and the
+     * cache refuses to unserialize objects (cache.serializable_classes = false,
+     * a deliberate guard), so a cache hit would hand back a broken object. One
+     * indexed lookup per request is what the app always did.
      */
     private function registerTenantHostResolver(): void
     {
         $this->app->bind(DomainTenantResolver::class, ActiveDomainTenantResolver::class);
-
-        DomainTenantResolver::$shouldCache = (bool) config('domains.resolver_cache');
-        DomainTenantResolver::$cacheTTL = (int) config('domains.resolver_cache_ttl');
     }
 
     /**

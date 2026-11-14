@@ -42,10 +42,6 @@ return [
     // Minimum seconds between manual "check DNS now" runs for one domain.
     'manual_check_interval' => 20,
 
-    // Cache host -> tenant lookups (invalidated whenever a domain row changes).
-    'resolver_cache' => (bool) env('DOMAIN_RESOLVER_CACHE', true),
-    'resolver_cache_ttl' => (int) env('DOMAIN_RESOLVER_CACHE_TTL', 300),
-
     // TLS issuance (host-side certbot, see deploy/custom-domains.sh).
     'ssl' => [
         'max_attempts' => 8,

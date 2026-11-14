@@ -165,7 +165,8 @@ class CustomDomainService
      */
     public function setPrimary(Domain $domain, bool $primary, ?User $actor = null): Domain
     {
-        if ($primary && (! $domain->isActive() || ($domain->isCustom() && $domain->ssl_status !== Domain::SSL_ISSUED))) {
+        // A bare label (cme) has no single host to redirect to, so it cannot be primary.
+        if ($primary && (! $domain->isActive() || ! $domain->isFullHost() || ($domain->isCustom() && $domain->ssl_status !== Domain::SSL_ISSUED))) {
             throw new ConflictHttpException('Only an active domain with an issued HTTPS certificate can be the primary address.');
         }
 

@@ -382,6 +382,80 @@ describe('resolving a tenant from the host', function () {
         expect($tenant->getTenantKey())->toBe('acme');
     });
 
+    it('resolves a tenant whose row stores only the subdomain label, as provisioning does by default', function () {
+        config(['tenancy.central_domains' => ['localhost', 'platform.test']]);
+        $tenant = makeTenant('acme');
+        Domain::query()->where('tenant_id', 'acme')->update(['domain' => 'acme', 'active_key' => 'acme']);
+        $resolver = app(DomainTenantResolver::class);
+
+        expect($resolver->resolve('acme.localhost')->getTenantKey())->toBe('acme')
+            ->and($resolver->resolve('acme.platform.test')->getTenantKey())->toBe($tenant->getTenantKey());
+    });
+
+    it('does not resolve a bare label for a deeper subdomain or a non-central host', function (string $host) {
+        makeTenant('acme');
+        Domain::query()->where('tenant_id', 'acme')->update(['domain' => 'acme', 'active_key' => 'acme']);
+
+        expect(fn () => app(DomainTenantResolver::class)->resolve($host))
+            ->toThrow(TenantCouldNotBeIdentifiedOnDomainException::class);
+    })->with(['x.acme.platform.test', 'acme.evil.test', 'acme.evilplatform.test']);
+
+    it('never resolves a custom domain row through the bare-label rule', function () {
+        $tenant = makeTenant('other');
+        activeCustomDomain($tenant, 'shop.example.com');
+        Domain::query()->where('domain', 'shop.example.com')->update(['domain' => 'acme', 'active_key' => 'acme']);
+
+        expect(fn () => app(DomainTenantResolver::class)->resolve('acme.platform.test'))
+            ->toThrow(TenantCouldNotBeIdentifiedOnDomainException::class);
+    });
+
+    it('resolves the same host on repeated requests with a cache that really serializes', function () {
+        // Regression: the resolver used to cache the Tenant model, and a cache that
+        // refuses to unserialize objects (cache.serializable_classes = false) handed
+        // back an incomplete object on the second request, failing every login.
+        config(['cache.default' => 'file', 'cache.stores.file.path' => storage_path('framework/cache/test-resolver')]);
+        makeTenant('acme');
+        Domain::query()->where('tenant_id', 'acme')->update(['domain' => 'acme', 'active_key' => 'acme']);
+
+        $first = app(DomainTenantResolver::class)->resolve('acme.platform.test');
+        $second = app(DomainTenantResolver::class)->resolve('acme.platform.test');
+
+        expect($first->getTenantKey())->toBe('acme')
+            ->and($second)->toBeInstanceOf(Tenant::class)
+            ->and($second->getTenantKey())->toBe('acme');
+    });
+
+    it('stops resolving a label host as soon as its row stops being active', function () {
+        makeTenant('acme');
+        $row = Domain::query()->where('tenant_id', 'acme')->firstOrFail();
+        $row->forceFill(['domain' => 'acme'])->save();
+        app(DomainTenantResolver::class)->resolve('acme.platform.test');
+
+        $row->forceFill(['status' => Domain::STATUS_DISABLED])->save();
+
+        expect(fn () => app(DomainTenantResolver::class)->resolve('acme.platform.test'))
+            ->toThrow(TenantCouldNotBeIdentifiedOnDomainException::class);
+    });
+
+    it('refuses to make a bare label the primary address', function () {
+        makeTenant('acme');
+        $row = Domain::query()->where('tenant_id', 'acme')->firstOrFail();
+        $row->forceFill(['domain' => 'acme'])->save();
+
+        expect(fn () => domainService()->setPrimary($row, true))->toThrow(ConflictHttpException::class);
+    });
+
+    it('returns 403 for the old login request when the host matches no tenant at all', function () {
+        $request = Request::create('https://nobody.platform.test/api/login', 'POST');
+
+        try {
+            app(ResolveTenantByHost::class)->handle($request, fn () => response('ok'));
+            $this->fail('Expected a 403.');
+        } catch (HttpException $e) {
+            expect($e->getStatusCode())->toBe(403);
+        }
+    });
+
     it('resolves an active custom domain to its tenant', function () {
         activeCustomDomain(makeTenant('acme'), 'inspiresoft.store');
 

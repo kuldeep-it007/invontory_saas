@@ -160,6 +160,8 @@ class WhiteLabelService
             'canonical_host' => Domain::query()->active()
                 ->where('tenant_id', tenant('id'))
                 ->where('is_primary', true)
+                // Never a bare label: the browser would redirect to https://acme.
+                ->where('domain', 'like', '%.%')
                 ->where(fn ($query) => $query->where('type', Domain::TYPE_PLATFORM)
                     ->orWhere(fn ($custom) => $custom->where('routing_ok', true)->where('ssl_status', Domain::SSL_ISSUED)))
                 ->value('domain'),

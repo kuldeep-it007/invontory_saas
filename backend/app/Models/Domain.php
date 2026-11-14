@@ -5,10 +5,8 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Cache;
 use Stancl\Tenancy\Database\Models\Domain as BaseDomain;
 use Stancl\Tenancy\Exceptions\DomainOccupiedByOtherTenantException;
-use Stancl\Tenancy\Resolvers\DomainTenantResolver;
 
 /**
  * Central-database Domain model (stancl/tenancy).
@@ -100,9 +98,6 @@ class Domain extends BaseDomain
             }
         });
 
-        // The host -> tenant cache must never outlive a status/ownership change.
-        static::saved(fn (self $domain) => $domain->forgetResolverCache());
-        static::deleted(fn (self $domain) => $domain->forgetResolverCache());
     }
 
     /**
@@ -145,9 +140,9 @@ class Domain extends BaseDomain
         return config('domains.txt_value_prefix').$this->verification_token;
     }
 
-    public function forgetResolverCache(): void
+    /** Whether the stored value is a complete hostname (not a bare subdomain label). */
+    public function isFullHost(): bool
     {
-        Cache::store(DomainTenantResolver::$cacheStore)
-            ->forget(app(DomainTenantResolver::class)->getCacheKey($this->domain));
+        return str_contains($this->domain, '.');
     }
 }
