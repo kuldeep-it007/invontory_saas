@@ -10,7 +10,7 @@ use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 
 #[Signature('domains:ssl-list')]
-#[Description('List active custom domains for the host certbot script (lines "KEEP <host>" / "ISSUE <host>", then "END")')]
+#[Description('List active custom domains for the host certbot script (lines "KEEP <host>" / "ISSUE <host>" / "RENEW <host>", then "END")')]
 class DomainsSslList extends Command
 {
     public function handle(CustomDomainSslService $ssl): int
@@ -23,6 +23,11 @@ class DomainsSslList extends Command
 
         foreach ($work['issue'] as $host) {
             $this->line('ISSUE '.$host);
+        }
+
+        // Forced renewals queued by a Platform_Admin.
+        foreach ($work['renew'] as $host) {
+            $this->line('RENEW '.$host);
         }
 
         // Sentinel: the host script refuses to delete anything from a truncated listing.

@@ -17,6 +17,7 @@ export function DomainsPanel(): JSX.Element {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,22 +46,63 @@ export function DomainsPanel(): JSX.Element {
     }
   }
 
+  async function renew(d: AdminDomain): Promise<void> {
+    const ok = window.confirm(
+      `Renew the HTTPS certificate for ${d.domain} now?\n\nLet's Encrypt allows only 5 renewals of the same domain per week, so use this only when needed.`,
+    );
+    if (!ok) return;
+    setError(null);
+    try {
+      await adminApi.renewDomainSsl(d.id);
+      setNotice(`Renewal queued for ${d.domain}. It runs within a few minutes.`);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  function httpsCell(d: AdminDomain): string {
+    if (d.ssl_renewal_pending) return "renewal queued";
+    if (d.ssl_status === "issued" && d.ssl_expires_at) {
+      return `issued, expires ${new Date(d.ssl_expires_at).toLocaleDateString()}`;
+    }
+    return d.ssl_status;
+  }
+
   const columns: Column<AdminDomain>[] = [
     { header: "Domain", cell: (d) => <span className="font-mono text-xs">{d.domain}</span> },
     { header: "Tenant", cell: (d) => <span className="font-mono text-xs">{d.tenant_id}</span> },
     { header: "Status", cell: (d) => <Badge>{d.status}</Badge> },
     { header: "Routing", cell: (d) => (d.routing_ok ? "OK" : "Not found") },
-    { header: "HTTPS", cell: (d) => d.ssl_status },
+    { header: "HTTPS", cell: (d) => httpsCell(d) },
     { header: "Note", cell: (d) => d.last_error ?? "—" },
     {
       header: "Action",
       cell: (d) => (
-        <button
-          onClick={() => void toggle(d)}
-          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
-        >
-          {d.status === "disabled" ? "Enable" : "Disable"}
-        </button>
+        <div className="flex gap-2">
+          {d.status === "active" ? (
+            <button
+              onClick={() => void renew(d)}
+              disabled={d.ssl_renewal_pending || !d.routing_ok}
+              title={
+                !d.routing_ok
+                  ? "The domain does not point at the server yet"
+                  : d.ssl_renewal_pending
+                    ? "A renewal is already queued"
+                    : "Request a new HTTPS certificate now"
+              }
+              className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Renew SSL
+            </button>
+          ) : null}
+          <button
+            onClick={() => void toggle(d)}
+            className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+          >
+            {d.status === "disabled" ? "Enable" : "Disable"}
+          </button>
+        </div>
       ),
     },
   ];
@@ -82,6 +124,11 @@ export function DomainsPanel(): JSX.Element {
           ))}
         </select>
       </div>
+      {notice ? (
+        <p className="text-sm text-green-700" role="status">
+          {notice}
+        </p>
+      ) : null}
       {error ? (
         <p className="text-sm text-red-700" role="alert">
           {error}

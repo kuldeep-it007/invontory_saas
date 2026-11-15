@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Domain;
 use App\Services\CustomDomainService;
+use App\Services\CustomDomainSslService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -48,6 +49,15 @@ class DomainAdminController extends Controller
     public function disable(Request $request, Domain $domain): JsonResponse
     {
         return response()->json(['data' => $this->domains->describe($this->domains->disable($domain, $request->user()))]);
+    }
+
+    /**
+     * POST /api/admin/domains/{domain}/renew-ssl - queue a forced certificate
+     * renewal (Platform_Admin only; tenants can see the status but not renew).
+     */
+    public function renewSsl(Request $request, Domain $domain, CustomDomainSslService $ssl): JsonResponse
+    {
+        return response()->json(['data' => $this->domains->describe($ssl->requestRenewal($domain, $request))], 202);
     }
 
     /** POST /api/admin/domains/{domain}/enable */

@@ -254,6 +254,8 @@ export interface AdminDomain {
   routing_ok: boolean;
   ssl_status: "none" | "pending" | "issued" | "failed";
   ssl_expires_at: string | null;
+  /** A forced renewal is queued and runs within a few minutes. */
+  ssl_renewal_pending: boolean;
   last_checked_at: string | null;
   last_error: string | null;
 }
@@ -352,6 +354,9 @@ export const adminApi = {
     adminRequest<{ data: AdminDomain[] }>(`/admin/domains${status ? `?status=${encodeURIComponent(status)}` : ""}`),
   disableDomain: (id: number) =>
     adminRequest<{ data: AdminDomain }>(`/admin/domains/${id}/disable`, { method: "POST" }),
+  /** Queue a forced certificate renewal (platform admin only). */
+  renewDomainSsl: (id: number) =>
+    adminRequest<{ data: AdminDomain }>(`/admin/domains/${id}/renew-ssl`, { method: "POST" }),
   enableDomain: (id: number) =>
     adminRequest<{ data: AdminDomain }>(`/admin/domains/${id}/enable`, { method: "POST" }),
 };

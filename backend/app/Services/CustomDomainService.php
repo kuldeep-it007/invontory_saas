@@ -239,6 +239,8 @@ class CustomDomainService
             'routing_ok' => $domain->routing_ok,
             'ssl_status' => $domain->ssl_status,
             'ssl_expires_at' => $domain->ssl_expires_at?->toIso8601String(),
+            // Read-only for tenants: only a Platform_Admin can queue a renewal.
+            'ssl_renewal_pending' => $domain->ssl_renew_requested_at !== null,
             'is_primary' => $domain->is_primary,
             'verified_at' => $domain->verified_at?->toIso8601String(),
             'last_checked_at' => $domain->last_checked_at?->toIso8601String(),

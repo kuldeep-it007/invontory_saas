@@ -934,13 +934,14 @@ cert_expiry_iso() { # cert_expiry_iso HOST
   [ -n "$end" ] && date -u -d "$end" +%Y-%m-%dT%H:%M:%SZ
 }
 sync_custom_domains() {
-  local out line h changed=0 refresh=0 results="" sep="" keep=() issue=() ok=0
+  local out line h changed=0 refresh=0 results="" sep="" keep=() issue=() renew=() ok=0 item force flag
   out=$(compose exec -T api php artisan domains:ssl-list 2>/dev/null) || { warn "domains:ssl-list failed; leaving things as they are"; return 1; }
   while IFS= read -r line; do
     line="${line%$'\r'}"
     case "$line" in
       "KEEP "*)  h="${line#KEEP }";  valid_custom_host "$h" && keep+=("$h")  || warn "ignoring invalid host from app: $h" ;;
       "ISSUE "*) h="${line#ISSUE }"; valid_custom_host "$h" && issue+=("$h") || warn "ignoring invalid host from app: $h" ;;
+      "RENEW "*) h="${line#RENEW }"; valid_custom_host "$h" && renew+=("$h") || warn "ignoring invalid host from app: $h" ;;
       END) ok=1 ;;
     esac
   done <<< "$out"
@@ -949,20 +950,27 @@ sync_custom_domains() {
   if [ ! -f "$SYNC_MARK" ] || [ -n "$(find "$SYNC_MARK" -mmin +1440 2>/dev/null)" ]; then refresh=1; fi
   ask LE_EMAIL "Email for Let's Encrypt expiry notices" "${ADMIN_EMAIL:-admin@${DOMAIN}}" >/dev/null
 
-  add_result() { results="${results}${sep}{\"host\":\"$1\",\"status\":\"$2\"${3:+,\"expires\":\"$3\"}}"; sep=","; }
+  # add_result HOST STATUS [EXPIRES] [RENEW=1]: one result for domains:ssl-report.
+  add_result() { results="${results}${sep}{\"host\":\"$1\",\"status\":\"$2\"${3:+,\"expires\":\"$3\"}${4:+,\"renew\":true}}"; sep=","; }
 
-  for h in "${issue[@]}"; do
-    log "requesting certificate for $h"
+  # "0 host" = issue when missing; "1 host" = forced renewal queued by a platform admin.
+  for item in "${issue[@]/#/0 }" "${renew[@]/#/1 }"; do
+    force="${item%% *}"; h="${item#* }"
+    if [ "$force" = 1 ]; then
+      flag=--force-renewal; log "renewing certificate for $h (requested by platform admin)"
+    else
+      flag=--keep-until-expiring; force=""; log "requesting certificate for $h"
+    fi
     if timeout 180 certbot certonly --webroot -w "$ACME_ROOT" --cert-name "$h" -d "$h" \
-         --agree-tos -m "$LE_EMAIL" --non-interactive --keep-until-expiring >/dev/null 2>&1; then
+         --agree-tos -m "$LE_EMAIL" --non-interactive "$flag" >/dev/null 2>&1; then
       write_custom_vhost "$h"
       if nginx -t >/dev/null 2>&1; then
-        changed=1; add_result "$h" issued "$(cert_expiry_iso "$h")"
+        changed=1; add_result "$h" issued "$(cert_expiry_iso "$h")" "$force"
       else
-        rm -f "$CUSTOM_CONF_DIR/$h.conf"; warn "nginx rejected the server block for $h"; add_result "$h" failed
+        rm -f "$CUSTOM_CONF_DIR/$h.conf"; warn "nginx rejected the server block for $h"; add_result "$h" failed "" "$force"
       fi
     else
-      warn "certbot could not issue a certificate for $h (DNS not pointing here yet?)"; add_result "$h" failed
+      warn "certbot could not issue a certificate for $h (see /var/log/letsencrypt/letsencrypt.log)"; add_result "$h" failed "" "$force"
     fi
   done
 

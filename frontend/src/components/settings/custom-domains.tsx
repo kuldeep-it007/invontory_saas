@@ -24,6 +24,7 @@ const STATUS_LABEL: Record<CustomDomain["status"], string> = {
 function httpsLabel(d: CustomDomain): string {
   if (d.type === "platform") return "HTTPS on";
   if (d.status !== "active") return "HTTPS after DNS is verified";
+  if (d.ssl_renewal_pending) return "HTTPS certificate renewal in progress (started by the platform)";
   switch (d.ssl_status) {
     case "issued":
       return d.ssl_expires_at ? `HTTPS on, renews before ${new Date(d.ssl_expires_at).toLocaleDateString()}` : "HTTPS on";

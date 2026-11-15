@@ -71,6 +71,7 @@ class Domain extends BaseDomain
             'expires_at' => 'datetime',
             'ssl_expires_at' => 'datetime',
             'ssl_checked_at' => 'datetime',
+            'ssl_renew_requested_at' => 'datetime',
         ];
     }
 

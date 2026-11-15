@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Exceptions\FeatureDisabledException;
 use App\Exceptions\QuotaExceededException;
+use App\Http\Middleware\EnforceHttps;
 use App\Http\Middleware\ResolveTenantByHost;
 use App\Jobs\VerifyCustomDomain;
 use App\Models\Domain;
@@ -15,12 +16,16 @@ use App\Models\Tenant;
 use App\Services\CustomDomainService;
 use App\Services\CustomDomainSslService;
 use App\Services\Dns\DnsResolver;
+use Illuminate\Auth\Middleware\Authenticate;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Middleware\RoleMiddleware;
 use Stancl\Tenancy\Exceptions\DomainOccupiedByOtherTenantException;
 use Stancl\Tenancy\Exceptions\TenantCouldNotBeIdentifiedOnDomainException;
 use Stancl\Tenancy\Resolvers\DomainTenantResolver;
@@ -67,8 +72,23 @@ beforeEach(function () {
             database_path('migrations/2026_10_03_130200_create_subscriptions_table.php'),
             database_path('migrations/2026_10_03_130300_create_plan_features_table.php'),
             database_path('migrations/2026_11_20_000000_add_custom_domain_columns_to_domains_table.php'),
+            database_path('migrations/2026_11_26_000000_add_ssl_renew_requested_at_to_domains_table.php'),
         ],
     ]);
+
+    // Same columns as the platform_admin_tables migration (which also alters users).
+    Schema::connection('central')->create('platform_audit_logs', function (Blueprint $table) {
+        $table->id();
+        $table->unsignedBigInteger('actor_id')->nullable();
+        $table->string('actor_email')->nullable();
+        $table->string('event', 64);
+        $table->string('tenant_id')->nullable();
+        $table->json('old_values')->nullable();
+        $table->json('new_values')->nullable();
+        $table->text('reason')->nullable();
+        $table->string('ip_address', 45)->nullable();
+        $table->timestamp('created_at')->useCurrent();
+    });
 
     fakeDns();
 });
@@ -782,5 +802,112 @@ describe('endpoints', function () {
 
         $response->assertOk();
         expect(collect($response->json('data'))->pluck('domain')->all())->toBe(['dead.example.com']);
+    });
+});
+
+describe('platform-admin certificate renewal', function () {
+    it('queues a forced renewal that the host script receives as RENEW instead of ISSUE', function () {
+        $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com', [
+            'ssl_status' => Domain::SSL_FAILED, 'ssl_attempts' => 8, 'ssl_checked_at' => now(),
+        ]);
+
+        app(CustomDomainSslService::class)->requestRenewal($domain);
+
+        $domain->refresh();
+        $work = app(CustomDomainSslService::class)->work();
+        Artisan::call('domains:ssl-list');
+
+        expect($domain->ssl_renew_requested_at)->not->toBeNull()
+            ->and($domain->ssl_status)->toBe(Domain::SSL_PENDING)
+            ->and($domain->ssl_attempts)->toBe(0)
+            ->and($work['renew'])->toBe(['shop.example.com'])
+            ->and($work['issue'])->toBe([])
+            ->and(preg_split('/\R/', trim(Artisan::output())))->toBe(['KEEP shop.example.com', 'RENEW shop.example.com', 'END']);
+    });
+
+    it('records the renewal request in the platform audit log', function () {
+        $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com');
+
+        app(CustomDomainSslService::class)->requestRenewal($domain);
+
+        $row = DB::connection('central')->table('platform_audit_logs')->first();
+        expect($row->event)->toBe('domain.ssl_renew_requested')
+            ->and($row->tenant_id)->toBe('acme')
+            ->and(json_decode($row->new_values, true)['domain'])->toBe('shop.example.com');
+    });
+
+    it('refuses a renewal that cannot succeed and returns 409', function (array $attributes, string $message) {
+        $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com', $attributes);
+
+        expect(fn () => app(CustomDomainSslService::class)->requestRenewal($domain))
+            ->toThrow(ConflictHttpException::class, $message);
+    })->with([
+        'not pointing at the server' => [['routing_ok' => false], 'does not point at this server'],
+        'not active' => [['status' => Domain::STATUS_PENDING], 'Only an active domain'],
+        'already queued' => [['ssl_renew_requested_at' => now()], 'already queued'],
+    ]);
+
+    it('refuses to renew a platform address', function () {
+        makeTenant('acme');
+        $platform = Domain::query()->where('domain', 'acme.platform.test')->firstOrFail();
+
+        expect(fn () => app(CustomDomainSslService::class)->requestRenewal($platform))
+            ->toThrow(ConflictHttpException::class, 'platform certificate');
+    });
+
+    it('closes the request when the renewal result comes back, even if it failed', function (string $status) {
+        $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com', ['ssl_renew_requested_at' => now()]);
+
+        app(CustomDomainSslService::class)->report([['host' => 'shop.example.com', 'status' => $status, 'renew' => true]]);
+
+        expect($domain->refresh()->ssl_renew_requested_at)->toBeNull()
+            ->and($domain->ssl_status)->toBe($status);
+    })->with([Domain::SSL_ISSUED, Domain::SSL_FAILED]);
+
+    it('keeps the request open when only a routine expiry refresh comes back', function () {
+        $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com', ['ssl_renew_requested_at' => now()]);
+
+        app(CustomDomainSslService::class)->report([['host' => 'shop.example.com', 'status' => 'issued', 'expires' => '2027-01-01T00:00:00Z']]);
+
+        expect($domain->refresh()->ssl_renew_requested_at)->not->toBeNull();
+    });
+
+    it('returns 202 from the platform-admin endpoint and 409 when the domain is not routed', function () {
+        $tenant = makeTenant('acme');
+        $ready = activeCustomDomain($tenant, 'ready.example.com');
+        $unrouted = activeCustomDomain($tenant, 'unrouted.example.com', ['routing_ok' => false]);
+
+        // Keep route-model binding on; skip only authentication, the role gate and HTTPS.
+        $this->withoutMiddleware([EnforceHttps::class, Authenticate::class, RoleMiddleware::class]);
+
+        $this->postJson("/api/admin/domains/{$ready->getKey()}/renew-ssl")
+            ->assertAccepted()
+            ->assertJsonPath('data.ssl_renewal_pending', true);
+        $this->postJson("/api/admin/domains/{$unrouted->getKey()}/renew-ssl")
+            ->assertConflict();
+    });
+
+    it('lets only a Platform_Admin renew: tenants have no renewal route at all', function () {
+        $router = app(Router::class);
+        $routes = collect($router->getRoutes());
+
+        $admin = $routes->first(fn ($r) => $r->uri() === 'api/admin/domains/{domain}/renew-ssl');
+        expect(array_values($router->gatherRouteMiddleware($admin)))
+            ->toContain('Spatie\Permission\Middleware\RoleMiddleware:Platform_Admin');
+
+        $tenantRenewRoutes = $routes->filter(fn ($r) => str_starts_with($r->uri(), 'api/tenant') && str_contains($r->uri(), 'renew'));
+        expect($tenantRenewRoutes)->toBeEmpty();
+    });
+
+    it('shows tenants that a renewal is in progress without letting them start one', function () {
+        $acme = makeTenant('acme');
+        activeCustomDomain($acme, 'shop.example.com', ['ssl_renew_requested_at' => now()]);
+        tenancy()->initialize($acme);
+
+        $response = $this->withoutMiddleware()->getJson('/api/tenant/domains');
+
+        $custom = collect($response->json('data'))->firstWhere('domain', 'shop.example.com');
+        expect($custom['ssl_renewal_pending'])->toBeTrue();
+        $this->withoutMiddleware()->postJson('/api/tenant/domains/'.$custom['id'].'/renew-ssl')->assertNotFound();
     });
 });

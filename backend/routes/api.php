@@ -799,6 +799,10 @@ Route::middleware('platform.admin')
             Route::get('/domains', [DomainAdminController::class, 'index']);
             Route::post('/domains/{domain}/disable', [DomainAdminController::class, 'disable'])->whereNumber('domain');
             Route::post('/domains/{domain}/enable', [DomainAdminController::class, 'enable'])->whereNumber('domain');
+            // Certificate renewal is kept with the platform admin. Throttled: Let's Encrypt
+            // allows only 5 duplicate certificates per domain per week.
+            Route::post('/domains/{domain}/renew-ssl', [DomainAdminController::class, 'renewSsl'])
+                ->whereNumber('domain')->middleware('throttle:10,60');
             Route::post('/tenants/{tenant}/plan', [TenantAdminController::class, 'changePlan']);
             Route::get('/tenants/{tenant}/history', [TenantAdminController::class, 'history']);
             Route::get('/usage', [TenantAdminController::class, 'usage']);

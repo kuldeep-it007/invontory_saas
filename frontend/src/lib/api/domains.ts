@@ -33,6 +33,8 @@ export interface CustomDomain {
   routing_ok: boolean;
   ssl_status: SslStatus;
   ssl_expires_at: string | null;
+  /** The platform queued a certificate renewal. Tenants can see it but not start one. */
+  ssl_renewal_pending: boolean;
   is_primary: boolean;
   verified_at: string | null;
   last_checked_at: string | null;
