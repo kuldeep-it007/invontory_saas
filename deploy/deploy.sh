@@ -33,6 +33,7 @@
 #   Domains      domain-status [domain]   domain-check <domain>   domain-renew <domain>
 #   Logs         archive-logs   prune-logs   prune-telescope [hours]
 #   App          artisan <command ...>    restart [service ...]
+#   Server       swap  (top swap up to SWAP_SIZE_GB, default 5 GB, on small servers)
 #   CI / VAPT    github-setup  (one-time: deploy key for GitHub Actions, limited to
 #                update + server-audit)   server-audit  (Lynis report)#
 # NON-INTERACTIVE: export the variables below instead of answering prompts, e.g.
@@ -54,6 +55,7 @@
 #   SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM   or plain SMTP instead (blank = log only)
 #   OCI_BUCKET OCI_NAMESPACE OCI_REGION OCI_ACCESS_KEY_ID OCI_SECRET_ACCESS_KEY
 #                  optional Oracle Object Storage for uploads (blank bucket = local disk)
+#   SWAP_SIZE_GB   swap target on servers under 4 GB RAM (default 5)
 #   APP_DIR        install directory                   (default /opt/inventory)
 #   MYSQL_LOCAL_PORT  server-loopback port MySQL is published on, for SSH-tunnelled
 #                  clients such as SQLyog               (default 3307)
@@ -168,7 +170,7 @@ preflight() {
   disk_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
   log "RAM ${mem_mb} MB, free disk ${disk_gb} GB, ${PRETTY_NAME:-Linux}"
   [ "$disk_gb" -ge 10 ] || die "need at least 10 GB free disk space"
-  [ "$mem_mb" -ge 1500 ] || warn "under 2 GB RAM: builds will be slow; swap will be added"
+  [ "$mem_mb" -ge 1500 ] || warn "under 2 GB RAM: builds will be slow; swap is topped up to ${SWAP_SIZE_GB:-5} GB"
   mkdir -p "$APP_DIR"; chmod 755 "$APP_DIR"
   load_state
   # Remember the domain so later runs (update/status) don't need it repeated.
@@ -208,13 +210,32 @@ install_docker() {
   docker compose version >/dev/null
 }
 
+# Swap target for small servers (Next.js / Composer builds need headroom).
+# Existing swap is topped up with an extra swap file instead of being resized,
+# because turning swap off on a 1 GB server that is using it can stall it.
+SWAP_SIZE_GB="${SWAP_SIZE_GB:-5}"
 setup_swap() {
-  local mem_mb; mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
-  if [ "$mem_mb" -ge 3900 ] || [ -n "$(swapon --show --noheadings)" ]; then return; fi
-  step "Adding 5 GB swap (small server: Next.js/Composer builds need headroom)"
-  fallocate -l 5G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=5120
-  chmod 600 /swapfile; mkswap /swapfile >/dev/null; swapon /swapfile
-  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  local mem_mb have_mb want_mb add_mb avail_mb file n=1
+  mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+  [ "$mem_mb" -ge 3900 ] && return 0
+  want_mb=$((SWAP_SIZE_GB * 1024))
+  have_mb=$(free -m | awk '/^Swap:/ {print $2}')
+  have_mb=${have_mb:-0}
+  # free(1) reports a little less than the file size; allow 64 MB of slack.
+  [ "$have_mb" -ge $((want_mb - 64)) ] && return 0
+  add_mb=$((want_mb - have_mb))
+  avail_mb=$(df -m --output=avail / | tail -1 | tr -dc '0-9')
+  if [ "${avail_mb:-0}" -lt $((add_mb + 2048)) ]; then
+    warn "only ${avail_mb} MB disk free: keeping ${have_mb} MB swap (wanted ${want_mb} MB)"
+    return 0
+  fi
+  file=/swapfile
+  while [ -e "$file" ]; do n=$((n + 1)); file="/swapfile$n"; done
+  step "Adding ${add_mb} MB swap at $file (total ${SWAP_SIZE_GB} GB; was ${have_mb} MB)"
+  fallocate -l "${add_mb}M" "$file" 2>/dev/null || dd if=/dev/zero of="$file" bs=1M count="$add_mb" status=none
+  chmod 600 "$file"; mkswap "$file" >/dev/null; swapon "$file"
+  grep -q "^$file " /etc/fstab || echo "$file none swap sw 0 0" >> /etc/fstab
+  log "swap now: $(free -m | awk '/^Swap:/ {print $2}') MB"
 }
 
 setup_firewall() {
@@ -1150,6 +1171,13 @@ cmd_domain_renew() {
   compose exec -T api php artisan domains:status "$host" || true
 }
 
+# Top swap up to SWAP_SIZE_GB now (also happens on every install/update).
+cmd_swap() {
+  [ "$(id -u)" -eq 0 ] || die "run as root: sudo $0 swap"
+  setup_swap
+  free -h | awk 'NR==1 || /^Swap:/'
+}
+
 cmd_archive_logs()   { preflight >/dev/null; compose exec -T api php artisan logs:archive "$@"; }
 cmd_prune_logs()     { preflight >/dev/null; compose exec -T api php artisan logs:prune; }
 cmd_prune_telescope() { preflight >/dev/null; compose exec -T api php artisan telescope:prune --hours="${1:-72}"; }
@@ -1230,7 +1258,7 @@ cmd_update() {
   command -v docker >/dev/null || die "not installed yet — run without arguments first"
   fetch_code
   continue_with_latest_script update
-  setup_swap   # no-op when swap exists; small servers need it for the Next.js build
+  setup_swap   # tops swap up to SWAP_SIZE_GB on small servers; no-op once reached
   verify_app_patches
   prepare_secrets
   write_runtime_files
@@ -1305,6 +1333,7 @@ main() {
     artisan) cmd_artisan "$@" ;;
     restart) cmd_restart "$@" ;;
     server-audit) cmd_server_audit ;;
+    swap) cmd_swap ;;
     github-setup) cmd_github_setup ;;
     ci) cmd_ci ;;    -h|--help|help) usage ;;
     *) die "unknown command '$cmd' (run '$0 help' for the list)" ;;
