@@ -13,7 +13,7 @@ This guide covers:
 9. [Testing evidence](#9-testing-evidence)
 10. [Rollback](#10-rollback)
 
-`deploy/deploy.sh` is unchanged. GitHub Actions runs it exactly as you do by hand.
+Everything on the server goes through `/opt/inventory/deploy.sh`, for you and for GitHub Actions alike (`deploy.sh help` lists every command).
 
 ---
 
@@ -24,8 +24,8 @@ Workflow: `.github/workflows/vapt.yml`
 | Job | When | What |
 |---|---|---|
 | **scan** | every push, pull request, manual run | gitleaks (secrets, full history) · `composer audit` · `npm audit` · Semgrep (OWASP Top 10, PHP, TypeScript, secrets) · Trivy (Dockerfile/compose misconfiguration, both images: OS + library CVEs, secrets) → **gate** |
-| **deploy** | push to `main`, gate passed | SSH to the server → `cp /opt/inventory/src/deploy/deploy.sh /root/deploy.sh && bash /root/deploy.sh update` |
-| **dast** | after a successful deploy | OWASP ZAP active scan (production, scoped) · testssl.sh (TLS) · nmap (open ports) · Lynis (server hardening, over SSH) |
+| **deploy** | push to `main`, gate passed | SSH to the server → `deploy.sh update` (the CI key can run nothing else) |
+| **dast** | after a successful deploy | OWASP ZAP active scan (production, scoped) · testssl.sh (TLS) · nmap (open ports) · Lynis (server hardening, via `deploy.sh server-audit`) |
 | **report** | always (not for PRs) | one HTML + JSON report → emailed (Mailgun) → GitHub artifact (90 days) → master bucket `vapt-reports/YYYY/MM/DD/<run>-<commit>/` (kept for your history) |
 
 Pull requests get the scan and gate and a summary on the run page. Nothing is deployed or emailed.
@@ -40,31 +40,24 @@ Repository → **Settings** → **Secrets and variables** → **Actions**.
 
 ### 2.1 Deploy access
 
-On your PC, create a deploy-only SSH key:
+On the server, once:
 
 ```
-ssh-keygen -t ed25519 -N "" -C "github-deploy" -f github-deploy
+/opt/inventory/deploy.sh github-setup
 ```
 
-On the server, allow it:
-
-```
-cat github-deploy.pub >> /root/.ssh/authorized_keys
-```
-
-Get the server's host key, so GitHub refuses an impostor:
-
-```
-ssh-keyscan -t ed25519 92.4.91.207
-```
+It creates an SSH key for GitHub Actions and registers it on the server. The key is **restricted**: it can only run `deploy.sh update` and `deploy.sh server-audit`. No shell, no port forwarding, no other commands. The output includes the private key and the exact values to paste:
 
 | Kind | Name | Value |
 |---|---|---|
-| Secret | `DEPLOY_SSH_KEY` | contents of the private file `github-deploy` |
-| Secret | `DEPLOY_KNOWN_HOSTS` | the `ssh-keyscan` output line |
+| Secret | `DEPLOY_SSH_KEY` | the private key printed by `github-setup` (all lines) |
+| Secret | `DEPLOY_KNOWN_HOSTS` | the host-key line printed by `github-setup` |
 | Secret | `DEPLOY_HOST` | `92.4.91.207` |
-| Secret | `DEPLOY_USER` | `root` (optional; this is the default) |
-| Variable | `DEPLOY_SERVER_IP` | `92.4.91.207` (passed to `deploy.sh` as `SERVER_IP`) |
+| Secret | `DEPLOY_USER` | `root` |
+
+The server IP the app uses comes from the server's own saved settings (Part 1.3 of `CUSTOM-DOMAINS.md`), so GitHub doesn't need it.
+
+To revoke CI access, delete the key's line (`github-actions@…`) from `/root/.ssh/authorized_keys`, or run `github-setup` again after deleting `/root/.ssh/inventory_github_actions*` to issue a new key.
 
 Optional but recommended: **Settings** → **Environments** → `production` → **Required reviewers**. Every deploy then waits for a named person to approve it.
 
@@ -78,7 +71,7 @@ Optional but recommended: **Settings** → **Environments** → `production` →
 | Variable | `VAPT_ALLOWED_PORTS` | `22,80,443` (default); any other open port is a Medium finding |
 | Variable | `VAPT_ZAP_MAX_MINUTES` | `45` (default) |
 | Variable | `VAPT_TRIVY_IGNORE_UNFIXED` | `true` (default); report only CVEs that have a fix |
-| Variable | `VAPT_SERVER_AUDIT` | `true` (default). Set `false` to skip Lynis. The first run installs the `lynis` package on the server. |
+| Variable | `VAPT_SERVER_AUDIT` | `true` (default). Set `false` to skip Lynis. The first `deploy.sh server-audit` installs the `lynis` package on the server. |
 
 ### 2.3 Report email (Mailgun)
 
@@ -254,7 +247,7 @@ Every search, download and export is recorded in the platform audit log (`logs.s
 
 ## 7. Performance changes
 
-All in `backend/` (image + entrypoint); `deploy.sh` untouched.
+All in `backend/` (image + entrypoint).
 
 | Change | Effect |
 |---|---|
@@ -283,7 +276,13 @@ Production npm dependencies: **0** known vulnerabilities (was 3 critical and 5 h
 
 ## 8. Configuration reference
 
-All optional; defaults shown. Add them to `/opt/inventory/backend.env` only if you need to change one.
+All optional; defaults shown. Change one with `deploy.sh config` (saved across updates; the app restarts to apply it):
+
+```n/opt/inventory/deploy.sh config set LOG_ALERT_EMAIL ops@yourco.com
+/opt/inventory/deploy.sh config list       # secrets are masked
+/opt/inventory/deploy.sh config unset LOG_ALERT_EMAIL
+```n
+Settings that `deploy.sh` already writes (database, mail, storage…) are refused here: re-run `deploy.sh` and answer its prompt instead.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -301,12 +300,14 @@ All optional; defaults shown. Add them to `/opt/inventory/backend.env` only if y
 | `PHP_CLI_SERVER_WORKERS` | `4` | parallel request workers (image default; `.env` value wins) |
 | `APP_OPTIMIZE` | (on in production) | `false` skips `php artisan optimize` at container start |
 
-Useful commands (in `/opt/inventory`, see `dc` in `CUSTOM-DOMAINS.md`):
+Useful commands:
 
 ```
-dc exec -T api php artisan logs:archive        # ship now (also retries failures)
-dc exec -T api php artisan logs:prune          # apply retention now
-dc exec -T api php artisan telescope:prune --hours=72
+/opt/inventory/deploy.sh archive-logs          # ship to the bucket now (also retries failures)
+/opt/inventory/deploy.sh prune-logs            # apply retention now (never under 365 days)
+/opt/inventory/deploy.sh prune-telescope 72    # trim Telescope to the last 72 hours
+/opt/inventory/deploy.sh server-audit          # Lynis hardening report
+/opt/inventory/deploy.sh artisan <command>     # any other Laravel command
 ```
 
 ---
@@ -337,7 +338,7 @@ Run locally before delivery:
 | To undo | Do this |
 |---|---|
 | Automatic deploys | Disable the workflow (Actions → VAPT and deploy → ⋯ → Disable) and deploy by hand as before |
-| Archive logging | `LOG_ARCHIVE_ENABLED=false` (already-archived files stay) |
-| Telescope | `TELESCOPE_ENABLED=false` |
-| Production caches | add `APP_OPTIMIZE=false` to `/opt/inventory/backend.env`, then `dc restart api worker scheduler` |
-| Parallel workers | add `PHP_CLI_SERVER_WORKERS=1` to `/opt/inventory/backend.env`, then `dc restart api` |
+| Archive logging | `deploy.sh config set LOG_ARCHIVE_ENABLED false` (already-archived files stay) |
+| Telescope | `deploy.sh config set TELESCOPE_ENABLED false` |
+| Production caches | `deploy.sh config set APP_OPTIMIZE false` |
+| Parallel workers | `deploy.sh config set PHP_CLI_SERVER_WORKERS 1` |

@@ -911,3 +911,38 @@ describe('platform-admin certificate renewal', function () {
         $this->withoutMiddleware()->postJson('/api/tenant/domains/'.$custom['id'].'/renew-ssl')->assertNotFound();
     });
 });
+
+describe('server commands used by deploy.sh', function () {
+    it('lists custom domains with their DNS and HTTPS state', function () {
+        activeCustomDomain(makeTenant('acme'), 'shop.example.com', ['ssl_status' => Domain::SSL_ISSUED, 'routing_ok' => false]);
+
+        $exit = Artisan::call('domains:status');
+        $row = collect(explode("\n", Artisan::output()))->first(fn (string $line) => str_contains($line, 'shop.example.com'));
+
+        expect($exit)->toBe(0)
+            ->and($row)->toContain('acme')->toContain('NO')->toContain('issued');
+    });
+
+    it('fails for an unknown domain so deploy.sh can report it', function () {
+        $this->artisan('domains:status', ['domain' => 'nobody.example.com'])->assertFailed();
+    });
+
+    it('queues a renewal from the command line with the same checks as the console', function () {
+        $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com');
+
+        $this->artisan('domains:renew-ssl', ['domain' => 'SHOP.example.com'])
+            ->expectsOutputToContain('Renewal queued for shop.example.com')
+            ->assertSuccessful();
+
+        expect($domain->refresh()->ssl_renew_requested_at)->not->toBeNull();
+    });
+
+    it('refuses a renewal that cannot succeed and explains why', function () {
+        activeCustomDomain(makeTenant('acme'), 'shop.example.com', ['routing_ok' => false]);
+
+        $this->artisan('domains:renew-ssl', ['domain' => 'shop.example.com'])
+            ->expectsOutputToContain('does not point at this server')
+            ->assertFailed();
+        $this->artisan('domains:renew-ssl', ['domain' => 'missing.example.com'])->assertFailed();
+    });
+});

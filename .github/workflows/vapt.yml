@@ -1,0 +1,318 @@
+# Automated VAPT on every build, gated deployment, post-deploy testing, report.
+#
+#   scan    (every push / PR / manual run)  secrets, dependencies, SAST, container
+#           images and configuration -> gate: blocks on unexcepted CRITICAL/HIGH
+#   deploy  (main only, gate passed)        SSH to the server: deploy.sh update
+#           (the CI key from `deploy.sh github-setup` can run nothing else)
+#   dast    (after deploy)                  OWASP ZAP active scan, TLS, open ports,
+#           server hardening (Lynis) against production
+#   report  (always, except PRs)            combined HTML/JSON report -> email,
+#           GitHub artifact, master bucket (vapt-reports/YYYY/MM/DD/...)
+#
+# Configuration (Settings -> Secrets and variables -> Actions): see deploy/SECURITY-AND-LOGGING.md.
+name: VAPT and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      override_reason:
+        description: "Authorized override: deploy despite blocking findings (reason is recorded). Only users in VAPT_OVERRIDE_USERS."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vapt-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FAIL_ON: ${{ vars.VAPT_FAIL_ON || 'CRITICAL,HIGH' }}
+
+jobs:
+  scan:
+    name: Pre-deploy security scans
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare report folder
+        run: mkdir -p reports && chmod 777 reports
+
+      - name: Exposed secrets (gitleaks, full history, redacted)
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect \
+            --source=/repo --redact --no-banner \
+            --report-format=json --report-path=/repo/reports/gitleaks.json --exit-code=0 \
+            || echo "::warning::gitleaks did not complete"
+
+      - name: PHP dependencies (composer audit)
+        run: |
+          docker run --rm -v "$PWD/backend:/app" -w /app composer:2 \
+            audit --locked --format=json --no-interaction > reports/composer-audit.json || true
+
+      - name: JS dependencies (npm audit)
+        working-directory: frontend
+        run: |
+          npm audit --omit=dev --json > ../reports/npm-audit-prod.json || true
+          npm audit --json > ../reports/npm-audit-all.json || true
+
+      - name: Application code, OWASP Top 10 (semgrep)
+        run: |
+          docker run --rm -v "$PWD:/src" semgrep/semgrep semgrep scan \
+            --config p/owasp-top-ten --config p/php --config p/typescript --config p/secrets \
+            --exclude vendor --exclude node_modules --exclude '*.min.js' \
+            --metrics=off --json --output /src/reports/semgrep.json /src \
+            || echo "::warning::semgrep reported an error"
+
+      - name: Dockerfile / compose / IaC misconfiguration (trivy config)
+        run: |
+          docker run --rm -v "$PWD:/repo" aquasec/trivy:latest config \
+            --format json --output /repo/reports/trivy-config.json /repo \
+            || echo "::warning::trivy config did not complete"
+
+      - name: Build images
+        run: |
+          docker build -t inventory-backend:ci backend
+          docker build -t inventory-frontend:ci --build-arg NEXT_PUBLIC_API_BASE_URL= frontend
+
+      - name: Container image vulnerabilities and secrets (trivy image)
+        env:
+          IGNORE_UNFIXED: ${{ vars.VAPT_TRIVY_IGNORE_UNFIXED || 'true' }}
+        run: |
+          flag=""; [ "$IGNORE_UNFIXED" = "true" ] && flag="--ignore-unfixed"
+          for img in backend frontend; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports:/out" \
+              aquasec/trivy:latest image $flag --scanners vuln,secret --format json \
+              --output "/out/trivy-image-$img.json" "inventory-$img:ci" \
+              || echo "::warning::trivy image $img did not complete"
+          done
+
+      - name: Gate (severity classification, exceptions, override)
+        env:
+          OVERRIDE_REASON: ${{ github.event.inputs.override_reason }}
+          ACTOR: ${{ github.actor }}
+          OVERRIDE_USERS: ${{ vars.VAPT_OVERRIDE_USERS }}
+        run: |
+          python3 security/vapt_report.py --inputs reports --out out/pre --stage pre-deploy \
+            --fail-on "$FAIL_ON" --override-reason "$OVERRIDE_REASON" \
+            --actor "$ACTOR" --override-users "$OVERRIDE_USERS"; rc=$?
+          cat out/pre/summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Keep raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vapt-pre
+          path: |
+            reports/
+            out/pre/
+          retention-days: 90
+
+  deploy:
+    name: Deploy (deploy.sh update)
+    needs: scan
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Skip if main moved on (a newer run deploys that commit after scanning it)
+        id: head
+        env:
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          TOKEN: ${{ github.token }}
+        run: |
+          head=$(git ls-remote "https://x-access-token:${TOKEN}@${REPO_URL#https://}" refs/heads/main | cut -f1)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::main is now at $head; this run scanned $GITHUB_SHA. Skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run deploy.sh update on the server
+        if: steps.head.outputs.skip != 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER || 'root' }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # The server's forced command maps this to: /opt/inventory/deploy.sh update
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes "$USER_NAME@$HOST" update
+          rm -f ~/.ssh/deploy
+
+  dast:
+    name: Post-deploy testing (ZAP, TLS, ports, server)
+    needs: deploy
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare
+        run: mkdir -p reports zap && cp security/zap/production.context zap/ && chmod -R 777 reports zap
+
+      - name: OWASP ZAP active scan (production, scoped)
+        env:
+          TARGETS: ${{ vars.VAPT_TARGET_URLS }}
+          MAX_MINUTES: ${{ vars.VAPT_ZAP_MAX_MINUTES || '45' }}
+        run: |
+          IFS=',' read -ra urls <<< "$TARGETS"
+          for url in "${urls[@]}"; do
+            url=$(echo "$url" | xargs); [ -z "$url" ] && continue
+            label=$(echo "$url" | sed -E 's#https?://##; s#[^A-Za-z0-9.-]#_#g')
+            docker run --rm -v "$PWD/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py \
+              -t "$url" -n production.context -m 5 -T "$MAX_MINUTES" -I \
+              -J "zap-$label.json" -r "zap-$label.html" \
+              -z "-config scanner.threadPerHost=2 -config connection.timeoutInSecs=30" \
+              || echo "::warning::ZAP scan of $url did not complete"
+          done
+          cp zap/zap-*.json zap/zap-*.html reports/ 2>/dev/null || true
+
+      - name: TLS configuration (testssl.sh) and open ports (nmap)
+        env:
+          TARGETS: ${{ vars.VAPT_TARGET_URLS }}
+        run: |
+          IFS=',' read -ra urls <<< "$TARGETS"
+          for url in "${urls[@]}"; do
+            host=$(echo "$url" | xargs | sed -E 's#https?://##; s#/.*##'); [ -z "$host" ] && continue
+            docker run --rm -v "$PWD/reports:/out" drwetter/testssl.sh --quiet --warnings off \
+              --jsonfile "/out/testssl-$host.json" --severity LOW "$host" >/dev/null 2>&1 \
+              || echo "::warning::testssl $host did not complete"
+            docker run --rm -v "$PWD/reports:/out" instrumentisto/nmap -Pn -sT --top-ports 1000 \
+              -oX "/out/nmap-$host.xml" "$host" >/dev/null 2>&1 \
+              || echo "::warning::nmap $host did not complete"
+          done
+
+      - name: Server hardening (Lynis over SSH)
+        if: vars.VAPT_SERVER_AUDIT != 'false'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER || 'root' }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # Forced command: /opt/inventory/deploy.sh server-audit (Lynis report on stdout)
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes "$USER_NAME@$HOST" server-audit \
+            > reports/lynis-report.dat || echo "::warning::Lynis did not complete"
+          rm -f ~/.ssh/deploy
+
+      - name: Post-deploy classification
+        env:
+          ALLOWED_PORTS: ${{ vars.VAPT_ALLOWED_PORTS || '22,80,443' }}
+        run: |
+          python3 security/vapt_report.py --inputs reports --out out/post --stage post-deploy \
+            --fail-on "$FAIL_ON" --allowed-ports "$ALLOWED_PORTS"; rc=$?
+          cat out/post/summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Keep raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vapt-post
+          path: |
+            reports/
+            out/post/
+          retention-days: 90
+
+  report:
+    name: Report, email and archive
+    needs: [scan, deploy, dast]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vapt-*
+          path: artifacts
+
+      - name: Combined report
+        env:
+          ALLOWED_PORTS: ${{ vars.VAPT_ALLOWED_PORTS || '22,80,443' }}
+          OVERRIDE_REASON: ${{ github.event.inputs.override_reason }}
+          ACTOR: ${{ github.actor }}
+          OVERRIDE_USERS: ${{ vars.VAPT_OVERRIDE_USERS }}
+          RESULTS: scan=${{ needs.scan.result }} deploy=${{ needs.deploy.result }} dast=${{ needs.dast.result }}
+        run: |
+          mkdir -p combined
+          cp artifacts/vapt-pre/reports/* combined/ 2>/dev/null || true
+          cp artifacts/vapt-post/reports/* combined/ 2>/dev/null || true
+          python3 security/vapt_report.py --inputs combined --out out/final --stage "build+deploy ($RESULTS)" \
+            --fail-on "$FAIL_ON" --allowed-ports "$ALLOWED_PORTS" --override-reason "$OVERRIDE_REASON" \
+            --actor "$ACTOR" --override-users "$OVERRIDE_USERS" || true
+          cat out/final/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Email the report (Mailgun)
+        env:
+          MAILGUN_API_KEY: ${{ secrets.MAILGUN_API_KEY }}
+          MAILGUN_DOMAIN: ${{ vars.MAILGUN_DOMAIN }}
+          MAILGUN_ENDPOINT: ${{ vars.MAILGUN_ENDPOINT || 'api.mailgun.net' }}
+          RECIPIENTS: ${{ vars.VAPT_RECIPIENTS }}
+          FROM: ${{ vars.VAPT_FROM }}
+        run: |
+          if [ -z "$MAILGUN_API_KEY" ] || [ -z "$RECIPIENTS" ]; then
+            echo "::warning::Email not configured (MAILGUN_API_KEY / VAPT_RECIPIENTS); skipping."; exit 0
+          fi
+          subject="VAPT $(head -n1 out/final/summary.md | sed 's/^### //') - ${GITHUB_SHA::8}"
+          for attempt in 1 2 3; do
+            if curl -fsS --user "api:$MAILGUN_API_KEY" "https://$MAILGUN_ENDPOINT/v3/$MAILGUN_DOMAIN/messages" \
+                 -F from="${FROM:-VAPT <vapt@$MAILGUN_DOMAIN>}" -F to="$RECIPIENTS" -F subject="$subject" \
+                 -F html="<out/final/summary.html" \
+                 -F attachment=@out/final/report.html -F attachment=@out/final/report.json >/dev/null; then
+              echo "Report emailed to $RECIPIENTS"; exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+          echo "::error::Could not email the VAPT report"; exit 1
+
+      - name: Archive the report in the master bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.OCI_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.OCI_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.OCI_REGION }}
+          ENDPOINT: ${{ vars.OCI_ENDPOINT }}
+          BUCKET: ${{ vars.OCI_BUCKET }}
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$BUCKET" ] || [ -z "$ENDPOINT" ]; then
+            echo "::warning::Bucket not configured; the report is kept as a 90-day GitHub artifact only."; exit 0
+          fi
+          aws configure set default.s3.addressing_style path
+          dest="s3://$BUCKET/vapt-reports/$(TZ=Asia/Kolkata date +%Y/%m/%d)/${GITHUB_RUN_ID}-${GITHUB_SHA::8}/"
+          aws s3 cp out/final/ "$dest" --recursive --endpoint-url "$ENDPOINT" --only-show-errors \
+            || { sleep 15; aws s3 cp out/final/ "$dest" --recursive --endpoint-url "$ENDPOINT" --only-show-errors; }
+          echo "Archived to $dest"
+
+      - name: Keep the final report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vapt-report
+          path: out/final/
+          retention-days: 90

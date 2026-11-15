@@ -27,6 +27,14 @@
 #   sudo ./deploy.sh sync-domains # issue/renew/remove HTTPS certs for tenants' custom domains
 #                                 (also runs every 2 minutes from a systemd timer)
 #
+# After the first install, use the installed copy: sudo /opt/inventory/deploy.sh <command>
+#   Settings     config list | config set KEY value | config unset KEY
+#                (extra app settings, kept across updates; app restarts to apply)
+#   Domains      domain-status [domain]   domain-check <domain>   domain-renew <domain>
+#   Logs         archive-logs   prune-logs   prune-telescope [hours]
+#   App          artisan <command ...>    restart [service ...]
+#   CI / VAPT    github-setup  (one-time: deploy key for GitHub Actions, limited to
+#                update + server-audit)   server-audit  (Lynis report)#
 # NON-INTERACTIVE: export the variables below instead of answering prompts, e.g.
 #   REPO_URL=git@github.com:me/inventory.git TLS_MODE=cloudflare \
 #   CF_API_TOKEN=xxxx LE_EMAIL=me@example.com sudo -E ./deploy.sh
@@ -327,10 +335,11 @@ prepare_secrets() {
 
 write_runtime_files() {
   # Public IPv4 shown to customers as the A-record target for root domains.
+  # A value passed in (SERVER_IP=… deploy.sh update) is remembered for later runs.
   if [ -z "${SERVER_IP:-}" ]; then
     SERVER_IP=$(curl -4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)
-    [ -z "$SERVER_IP" ] || set_state SERVER_IP "$SERVER_IP"
   fi
+  [ -z "${SERVER_IP:-}" ] || set_state SERVER_IP "$SERVER_IP"
   step "Writing runtime configuration to $APP_DIR"
   mkdir -p "$APP_DIR" "$MYSQL_INIT_DIR"
 
@@ -422,6 +431,7 @@ AI_REPORTS_ENABLED=false
 LLM_PROVIDER=none
 EOF
   )
+  append_extra_settings
 
   # Compose variable file.
   (umask 077; cat > "$COMPOSE_ENV" <<EOF
@@ -893,7 +903,7 @@ setup_custom_domains() {
   fi
   nginx_reload
   # Keep a stable copy of this script for the timer, regardless of where it was run from.
-  install -m 700 "$(readlink -f "$0")" "$APP_DIR/deploy.sh"
+  install_self
   cat > /etc/systemd/system/inventory-domains.service <<EOF
 [Unit]
 Description=Sync HTTPS certificates for tenant custom domains
@@ -1010,6 +1020,185 @@ cmd_sync_domains() {
   flock -n 9 || { log "another sync is running"; return 0; }
   sync_custom_domains
 }
+# ── 8. Day-2 operations (everything is run through this script) ─────────────
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+EXTRA_ENV="$APP_DIR/extra.env"            # app settings added with `deploy.sh config set`
+CI_KEY="/root/.ssh/inventory_github_actions"
+
+# Keep a stable, executable copy at $APP_DIR/deploy.sh (used by timers, CI and you).
+install_self() {
+  [ "$SELF" = "$APP_DIR/deploy.sh" ] && return 0
+  install -m 700 "$SELF" "$APP_DIR/deploy.sh"
+}
+
+# After `git pull`, finish the run with the deploy.sh that was just pulled, so a
+# changed script never needs a second `update`.
+continue_with_latest_script() {
+  local new="$SRC_DIR/deploy/deploy.sh"
+  [ -f "$new" ] && [ -z "${DEPLOY_REEXEC:-}" ] || return 0
+  cmp -s "$new" "$SELF" && return 0
+  install -m 700 "$new" "$APP_DIR/deploy.sh"
+  log "deploy.sh changed in the repository; continuing with the new version"
+  DEPLOY_REEXEC=1 exec bash "$APP_DIR/deploy.sh" "$@"
+}
+
+valid_env_key() { [[ "$1" =~ ^[A-Z][A-Z0-9_]{0,63}$ ]]; }
+
+append_extra_settings() {
+  [ -s "$EXTRA_ENV" ] || return 0
+  local line key
+  printf '\n# --- extra settings (deploy.sh config set) ---\n' >> "$BACKEND_ENV"
+  while IFS= read -r line || [ -n "$line" ]; do
+    key="${line%%=*}"
+    valid_env_key "$key" || continue
+    if grep -q "^${key}=" "$BACKEND_ENV"; then
+      warn "config: $key is managed by deploy.sh; ignoring the extra value"
+      continue
+    fi
+    printf '%s\n' "$line" >> "$BACKEND_ENV"
+  done < "$EXTRA_ENV"
+}
+
+# Rewrite backend.env from saved answers and restart the app containers (no rebuild).
+apply_settings() {
+  prepare_secrets
+  write_runtime_files
+  step "Restarting app containers to apply the settings"
+  compose up -d --no-build --force-recreate api worker scheduler
+  wait_http "http://127.0.0.1:8000/up" 120 || warn "API not healthy yet: deploy.sh logs api"
+}
+
+cmd_config() {
+  preflight >/dev/null
+  local action="${1:-list}" key="${2:-}" value="${3:-}"
+  touch "$EXTRA_ENV"; chmod 600 "$EXTRA_ENV"
+  case "$action" in
+    list)
+      step "Extra settings ($EXTRA_ENV)"
+      if [ -s "$EXTRA_ENV" ]; then sed -E 's/^([A-Z0-9_]*(KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)=.*/\1=********/' "$EXTRA_ENV"; else log "(none)"; fi
+      ;;
+    set)
+      valid_env_key "$key" || die "usage: $0 config set KEY value   (KEY: A-Z, 0-9, _)"
+      case "$value" in *"'"*|*$'\n'*) die "value cannot contain a single quote or newline" ;; esac
+      if grep -q "^${key}=" "$BACKEND_ENV" 2>/dev/null && ! grep -q "^${key}=" "$EXTRA_ENV"; then
+        die "$key is managed by deploy.sh itself; re-run its prompt instead (see the VARIABLES list in $0 --help)"
+      fi
+      { grep -v "^${key}=" "$EXTRA_ENV" || true; printf "%s='%s'\n" "$key" "$value"; } > "$EXTRA_ENV.tmp" && mv "$EXTRA_ENV.tmp" "$EXTRA_ENV"
+      chmod 600 "$EXTRA_ENV"; log "saved $key"
+      apply_settings
+      ;;
+    unset)
+      valid_env_key "$key" || die "usage: $0 config unset KEY"
+      { grep -v "^${key}=" "$EXTRA_ENV" || true; } > "$EXTRA_ENV.tmp" && mv "$EXTRA_ENV.tmp" "$EXTRA_ENV"
+      log "removed $key"
+      apply_settings
+      ;;
+    *) die "usage: $0 config [list | set KEY value | unset KEY]" ;;
+  esac
+}
+
+cmd_artisan() {
+  preflight >/dev/null
+  [ "$#" -ge 1 ] || die "usage: $0 artisan <command> [args...]   e.g. $0 artisan about"
+  compose exec -T api php artisan "$@"
+}
+
+cmd_restart() {
+  preflight >/dev/null
+  [ "$#" -gt 0 ] || set -- api worker scheduler frontend
+  compose restart "$@"
+}
+
+cmd_domain_status() {
+  preflight >/dev/null
+  compose exec -T api php artisan domains:status "$@"
+}
+
+# Everything the runbook used to check by hand, for one domain.
+cmd_domain_check() {
+  preflight >/dev/null
+  local host="${1:-}" ok=1 a aaaa txt head
+  valid_custom_host "$host" || die "usage: $0 domain-check <domain>"
+  step "DNS and routing for $host (server IP ${SERVER_IP:-unknown})"
+  a=$( (dig +short A "$host" @1.1.1.1 | sort | tr '\n' ' ') 2>/dev/null || true)
+  aaaa=$( (dig +short AAAA "$host" @1.1.1.1 | tr '\n' ' ') 2>/dev/null || true)
+  txt=$( (dig +short TXT "_inventory-verify.$host" @1.1.1.1 | tr -d '"' | tr '\n' ' ') 2>/dev/null || true)
+  if [ -n "${SERVER_IP:-}" ] && [ "$(echo "$a" | xargs)" = "$SERVER_IP" ]; then log "A     ok    $a"
+  else warn "A     $a  (must be only ${SERVER_IP:-the server IP}; 104.21.* / 172.67.* means Cloudflare proxy)"; ok=0; fi
+  if [ -z "$aaaa" ]; then log "AAAA  ok    (none)"; else warn "AAAA  $aaaa (delete these records)"; ok=0; fi
+  if [ -n "$txt" ]; then log "TXT   found $txt"; else warn "TXT   _inventory-verify.$host not found"; ok=0; fi
+  head=$( (curl -sI --max-time 10 "http://$host/.well-known/acme-challenge/deploy-check" | tr -d '\r' | grep -iE '^(HTTP|server):' | tr '\n' ' ') 2>/dev/null || true)
+  if echo "$head" | grep -qi 'server: nginx'; then log "HTTP  ok    reaches nginx on this server"; else warn "HTTP  $head (must reach nginx here, not Cloudflare)"; ok=0; fi
+  step "What the app knows"
+  compose exec -T api php artisan domains:status "$host" || true
+  [ "$ok" -eq 1 ] && log "DNS is ready. If HTTPS is still pending: $0 domain-renew $host" || warn "Fix the items above, wait for DNS, then run this again."
+}
+
+cmd_domain_renew() {
+  preflight >/dev/null
+  local host="${1:-}"
+  valid_custom_host "$host" || die "usage: $0 domain-renew <domain>"
+  compose exec -T api php artisan domains:renew-ssl "$host"
+  log "running the certificate step now"
+  cmd_sync_domains
+  compose exec -T api php artisan domains:status "$host" || true
+}
+
+cmd_archive_logs()   { preflight >/dev/null; compose exec -T api php artisan logs:archive "$@"; }
+cmd_prune_logs()     { preflight >/dev/null; compose exec -T api php artisan logs:prune; }
+cmd_prune_telescope() { preflight >/dev/null; compose exec -T api php artisan telescope:prune --hours="${1:-72}"; }
+
+# Server hardening report (Lynis) on stdout; used by the GitHub VAPT workflow.
+cmd_server_audit() {
+  [ "$(id -u)" -eq 0 ] || die "run as root: sudo $0 server-audit"
+  command -v lynis >/dev/null || { DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq lynis >/dev/null; }
+  local report; report=$(mktemp)
+  lynis audit system --quick --no-colors --report-file "$report" >/dev/null 2>&1 || true
+  cat "$report"; rm -f "$report"
+}
+
+# Entry point for the GitHub Actions key: only these commands are allowed.
+cmd_ci() {
+  case "${SSH_ORIGINAL_COMMAND:-}" in
+    update)       exec bash "$APP_DIR/deploy.sh" update ;;
+    server-audit) exec bash "$APP_DIR/deploy.sh" server-audit ;;
+    *) echo "deploy.sh ci: command not allowed: '${SSH_ORIGINAL_COMMAND:-}'" >&2; exit 1 ;;
+  esac
+}
+
+# One-time: a dedicated SSH key for GitHub Actions that can ONLY run
+# `update` and `server-audit`, plus the exact GitHub settings to paste.
+cmd_github_setup() {
+  preflight >/dev/null
+  install_self
+  if [ ! -f "$CI_KEY" ]; then
+    ssh-keygen -t ed25519 -N '' -C "github-actions@$(hostname)" -f "$CI_KEY" >/dev/null
+  fi
+  mkdir -p /root/.ssh; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys
+  local pub; pub=$(cat "$CI_KEY.pub")
+  grep -vF "$pub" /root/.ssh/authorized_keys > /root/.ssh/authorized_keys.tmp || true
+  printf 'command="%s ci",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty %s\n' "$APP_DIR/deploy.sh" "$pub" >> /root/.ssh/authorized_keys.tmp
+  mv /root/.ssh/authorized_keys.tmp /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys
+  local ip="${SERVER_IP:-$(curl -4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null || echo '<server-ip>')}"
+  cat <<EOF
+
+${C_B}GitHub → repository → Settings → Secrets and variables → Actions${C_0}
+
+  Secret  DEPLOY_SSH_KEY       (the private key below, all lines)
+  Secret  DEPLOY_KNOWN_HOSTS   $( (ssh-keyscan -t ed25519 "$ip" 2>/dev/null | head -n1) || true)
+  Secret  DEPLOY_HOST          $ip
+  Secret  DEPLOY_USER          root
+  Variable VAPT_TARGET_URLS    https://${DOMAIN}
+  (Mailgun, bucket and gate settings: deploy/SECURITY-AND-LOGGING.md section 2)
+
+This key can only run '$0 update' and '$0 server-audit'.
+Revoke it any time by deleting its line from /root/.ssh/authorized_keys.
+
+----- DEPLOY_SSH_KEY (copy everything between the lines) -----
+$(cat "$CI_KEY")
+--------------------------------------------------------------
+EOF
+}
 cmd_install() {
   preflight
   install_packages
@@ -1034,6 +1223,7 @@ cmd_update() {
   preflight
   command -v docker >/dev/null || die "not installed yet — run without arguments first"
   fetch_code
+  continue_with_latest_script update
   verify_app_patches
   prepare_secrets
   write_runtime_files
@@ -1098,8 +1288,19 @@ main() {
     backup)   cmd_backup ;;
     add-host) cmd_add_host "$@" ;;
     sync-domains) cmd_sync_domains ;;
-    -h|--help|help) usage ;;
-    *) die "unknown command '$cmd' (install | update | status | logs | backup | add-host | sync-domains)" ;;
+    domain-status) cmd_domain_status "$@" ;;
+    domain-check) cmd_domain_check "$@" ;;
+    domain-renew) cmd_domain_renew "$@" ;;
+    archive-logs) cmd_archive_logs "$@" ;;
+    prune-logs) cmd_prune_logs ;;
+    prune-telescope) cmd_prune_telescope "$@" ;;
+    config) cmd_config "$@" ;;
+    artisan) cmd_artisan "$@" ;;
+    restart) cmd_restart "$@" ;;
+    server-audit) cmd_server_audit ;;
+    github-setup) cmd_github_setup ;;
+    ci) cmd_ci ;;    -h|--help|help) usage ;;
+    *) die "unknown command '$cmd' (run '$0 help' for the list)" ;;
   esac
 }
 # Run only when executed, so the functions can be sourced for testing.
