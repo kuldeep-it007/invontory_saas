@@ -12,7 +12,19 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+# Slow or flaky links (small VPS): npm retries each download patiently, the npm
+# cache survives between builds (BuildKit cache mount) so a retry resumes rather
+# than starting over, and the whole install is retried up to 3 times.
+RUN --mount=type=cache,target=/root/.npm \
+    npm config set fetch-retries 6 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 180000 \
+    && npm config set fetch-timeout 600000 \
+    && for attempt in 1 2 3; do \
+         npm ci --no-audit --no-fund --prefer-offline && exit 0; \
+         echo "npm ci failed (attempt $attempt of 3); retrying in 30s"; sleep 30; \
+       done; \
+       exit 1
 
 # ---------- stage 2: build ----------
 FROM node:20-alpine AS build

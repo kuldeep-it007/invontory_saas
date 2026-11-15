@@ -211,8 +211,8 @@ install_docker() {
 setup_swap() {
   local mem_mb; mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
   if [ "$mem_mb" -ge 3900 ] || [ -n "$(swapon --show --noheadings)" ]; then return; fi
-  step "Adding 2 GB swap (small server: Next.js/Composer builds need headroom)"
-  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  step "Adding 5 GB swap (small server: Next.js/Composer builds need headroom)"
+  fallocate -l 5G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=5120
   chmod 600 /swapfile; mkswap /swapfile >/dev/null; swapon /swapfile
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 }
@@ -589,7 +589,13 @@ wait_http() { # wait_http URL SECONDS
 
 start_stack() {
   step "Building images (first build takes several minutes)"
-  compose build --pull
+  # A network hiccup should not cost a whole deploy: retry once, reusing every
+  # layer and download that already succeeded.
+  if ! compose build --pull; then
+    warn "image build failed; retrying once in 30s (layers already built are reused)"
+    sleep 30
+    compose build || die "image build failed twice. The running site is unchanged. Check the error above, then run: $0 update"
+  fi
   step "Starting containers"
   compose up -d --remove-orphans
   log "waiting for the API (runs database migrations on first start)…"
@@ -1224,6 +1230,7 @@ cmd_update() {
   command -v docker >/dev/null || die "not installed yet — run without arguments first"
   fetch_code
   continue_with_latest_script update
+  setup_swap   # no-op when swap exists; small servers need it for the Next.js build
   verify_app_patches
   prepare_secrets
   write_runtime_files
