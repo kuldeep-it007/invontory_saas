@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Exceptions\ImmutableAuditException;
 use App\Models\Concerns\TenantAuditable;
 use App\Support\AuditRecorder;
+use Illuminate\Support\Facades\Log;
 use OwenIt\Auditing\Models\Audit as OwenItAudit;
 
 /**
@@ -57,6 +58,22 @@ class AuditLog extends OwenItAudit
      */
     protected static function booted(): void
     {
+        // Mirror every model audit to the archive log (survives a dropped tenant DB).
+        static::created(function (self $audit): void {
+            try {
+                Log::channel('archive')->info('model.'.$audit->event, [
+                    'event' => 'model.'.$audit->event,
+                    'auditable_type' => class_basename((string) $audit->auditable_type),
+                    'auditable_id' => $audit->auditable_id,
+                    'user_id' => $audit->user_id,
+                    'old' => $audit->old_values,
+                    'new' => $audit->new_values,
+                ]);
+            } catch (\Throwable) {
+                // Best-effort mirror; the audit row is the source of truth.
+            }
+        });
+
         static::updating(function (): void {
             throw ImmutableAuditException::forUpdate();
         });

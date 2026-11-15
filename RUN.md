@@ -60,7 +60,7 @@ Defaults: `superadmin@platform.test` / `password123`. Override with options:
 
 ```bash
 docker compose exec api php artisan platform:admin \
-  --email=admin@yourco.com --password='StrongPass123' --name="Super Admin"
+  --email=admin@yourco.com --password='<choose-a-strong-password>' --name="Super Admin"
 ```
 
 The command prints a **Bearer token**. Use it against the central admin API

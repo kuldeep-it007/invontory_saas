@@ -3,9 +3,11 @@
 use App\Http\Controllers\Admin\CentralAuthController;
 use App\Http\Controllers\Admin\DomainAdminController;
 use App\Http\Controllers\Admin\ImpersonationController;
+use App\Http\Controllers\Admin\LogArchiveController;
 use App\Http\Controllers\Admin\PlanAdminController;
 use App\Http\Controllers\Admin\PlatformAdminController;
 use App\Http\Controllers\Admin\SubscriptionAdminController;
+use App\Http\Controllers\Admin\TelescopeAccessController;
 use App\Http\Controllers\Admin\TenantAdminController;
 use App\Http\Controllers\Admin\TenantProvisioningController;
 use App\Http\Controllers\AdvancedOrderController;
@@ -182,7 +184,7 @@ Route::middleware('tenant')->group(function () {
         ->whereIn('asset', ['logo', 'favicon'])
         ->middleware('role:Company_Admin');
 
-        /*
+    /*
     | Tenant-owned SMTP server and object storage (Company_Admin). Test-then-save;
     | secrets are write-only and never returned. Tests are throttled because they
     | open outbound connections.
@@ -703,9 +705,9 @@ Route::middleware('tenant')->group(function () {
     Route::post('/reports/schedule', [ReportExportController::class, 'schedule'])
         ->middleware(['permission:reports.view', 'feature:exports']);
 
-Route::get('/reports/exports/{export}/download', [ReportExportController::class, 'download'])
-    ->whereNumber('export')
-    ->middleware(['permission:reports.view', 'feature:exports']);
+    Route::get('/reports/exports/{export}/download', [ReportExportController::class, 'download'])
+        ->whereNumber('export')
+        ->middleware(['permission:reports.view', 'feature:exports']);
 
     /*
     | AI natural-language reporting (R30.6, R30.7, R31). A single endpoint maps
@@ -799,6 +801,15 @@ Route::middleware('platform.admin')
             Route::get('/domains', [DomainAdminController::class, 'index']);
             Route::post('/domains/{domain}/disable', [DomainAdminController::class, 'disable'])->whereNumber('domain');
             Route::post('/domains/{domain}/enable', [DomainAdminController::class, 'enable'])->whereNumber('domain');
+            // ── Logs: Telescope access + archived logs (master bucket) ─────────
+            // Platform_Admin only; tenants have no log routes at all.
+            Route::post('/telescope/session', [TelescopeAccessController::class, 'issue'])->middleware('throttle:10,1');
+            Route::get('/log-archives', [LogArchiveController::class, 'index']);
+            Route::get('/log-archives/search', [LogArchiveController::class, 'search'])->middleware('throttle:30,1');
+            Route::get('/log-archives/export', [LogArchiveController::class, 'export'])->middleware('throttle:10,1');
+            Route::get('/log-archives/{archive}/download', [LogArchiveController::class, 'download'])
+                ->whereNumber('archive')->middleware('throttle:60,1');
+
             // Certificate renewal is kept with the platform admin. Throttled: Let's Encrypt
             // allows only 5 duplicate certificates per domain per week.
             Route::post('/domains/{domain}/renew-ssl', [DomainAdminController::class, 'renewSsl'])

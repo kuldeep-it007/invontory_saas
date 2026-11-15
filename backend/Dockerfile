@@ -54,6 +54,24 @@ RUN apt-get update \
 # SMTP / S3 client could carry the first characters of a tenant's password or secret key.
 RUN printf 'zend.exception_ignore_args=On\n' > "$PHP_INI_DIR/conf.d/zz-exception-args.ini"
 
+# Performance (production):
+#   - OPcache for the CLI SAPI, which is what `php artisan serve` runs on. Code
+#     is baked into the image, so timestamp checks are switched off.
+#   - PHP_CLI_SERVER_WORKERS: `artisan serve` handles this many requests in
+#     parallel instead of one at a time. Override per container if needed.
+RUN (php -m | grep -qi '^Zend OPcache$' || docker-php-ext-install opcache) \
+    && printf '%s\n' \
+       'opcache.enable=1' \
+       'opcache.enable_cli=1' \
+       'opcache.memory_consumption=192' \
+       'opcache.interned_strings_buffer=16' \
+       'opcache.max_accelerated_files=20000' \
+       'opcache.validate_timestamps=0' \
+       'realpath_cache_size=4096K' \
+       'realpath_cache_ttl=600' \
+       > "$PHP_INI_DIR/conf.d/zz-opcache.ini"
+ENV PHP_CLI_SERVER_WORKERS=4
+
 WORKDIR /app
 
 # App code + installed vendor tree from stage 1.

@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Exceptions\ImmutableAuditException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Append-only central audit record for Platform_Admin actions.
@@ -54,6 +55,20 @@ class PlatformAuditLog extends Model
     ): self {
         $request ??= request();
         $actor = $request?->user();
+
+        try {
+            Log::channel('archive')->info('platform_audit.'.$event, [
+                'event' => 'platform_audit.'.$event,
+                'actor_id' => $actor?->getKey(),
+                'actor_email' => $actor?->email,
+                'subject_tenant_id' => $tenantId,
+                'old' => $old,
+                'new' => $new,
+                'reason' => $reason,
+            ]);
+        } catch (\Throwable) {
+            // Best-effort mirror; the database row below is the source of truth.
+        }
 
         return self::create([
             'actor_id' => $actor?->getKey(),

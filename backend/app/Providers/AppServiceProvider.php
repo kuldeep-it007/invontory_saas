@@ -20,6 +20,12 @@ use App\Services\ReportExportService;
 use App\Services\ReportQueryService;
 use App\Services\TenantIntegrations\TenantExportStorage;
 use App\Tenancy\ActiveDomainTenantResolver;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
@@ -124,6 +130,30 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->rejectUnidentifiedTenants();
         $this->useTenantStampedTokens();
+        $this->logBackgroundAndDatabaseEvents();
+    }
+
+    /**
+     * Archive-log queued job outcomes and slow queries (SQL only, no bindings,
+     * so no data values reach the log).
+     */
+    private function logBackgroundAndDatabaseEvents(): void
+    {
+        Queue::after(function (JobProcessed $event): void {
+            Log::channel('archive')->info('job.processed', ['event' => 'job.processed', 'job' => $event->job->resolveName(), 'queue' => $event->job->getQueue()]);
+        });
+        Queue::failing(function (JobFailed $event): void {
+            Log::channel('archive')->error('job.failed', ['event' => 'job.failed', 'job' => $event->job->resolveName(), 'queue' => $event->job->getQueue(), 'error' => mb_substr($event->exception->getMessage(), 0, 500)]);
+        });
+
+        $threshold = (int) config('logging.archive.slow_query_ms');
+        if ($threshold > 0) {
+            DB::listen(function (QueryExecuted $query) use ($threshold): void {
+                if ($query->time >= $threshold) {
+                    Log::channel('archive')->warning('db.slow_query', ['event' => 'db.slow_query', 'connection' => $query->connectionName, 'ms' => (int) $query->time, 'sql' => mb_substr($query->sql, 0, 2000)]);
+                }
+            });
+        }
     }
 
     /**

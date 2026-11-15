@@ -8,6 +8,7 @@ use App\Models\AuditLog;
 use App\Models\Concerns\TenantAuditable;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -43,6 +44,8 @@ class AuditRecorder
         $request ??= request();
 
         try {
+            $this->archive($event, $user, $context, $reason);
+
             AuditLog::create([
                 'user_type' => $user ? $user::class : null,
                 'user_id' => $user?->getKey(),
@@ -60,6 +63,26 @@ class AuditRecorder
             ]);
         } catch (Throwable $e) {
             // Best-effort: never let an audit failure affect the auth response.
+        }
+    }
+
+    /**
+     * Mirror the event to the archive log, so it survives even if the tenant
+     * database is later dropped.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function archive(string $event, ?User $user, array $context, ?string $reason): void
+    {
+        try {
+            Log::channel('archive')->info('audit.'.$event, [
+                'event' => 'audit.'.$event,
+                'user_id' => $user?->getKey(),
+                'reason' => $reason,
+                'details' => $context,
+            ]);
+        } catch (Throwable) {
+            // Archiving is best-effort here; the database audit row is the source of truth.
         }
     }
 }

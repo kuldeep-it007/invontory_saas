@@ -13,7 +13,8 @@ import type { Branding } from "./types";
  * `NEXT_PUBLIC_TENANT_HOST` when no tenant host is present.
  */
 export async function resolveBrandingForRequest(): Promise<Branding> {
-  const h = headers();
+  // Next 15: request APIs are asynchronous.
+  const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host");
   return fetchBranding(host);
 }

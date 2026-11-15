@@ -8,6 +8,7 @@ import { TenantsPanel } from "@/components/platform/tenants-panel";
 import { PlansPanel } from "@/components/platform/plans-panel";
 import { SubscriptionsPanel } from "@/components/platform/subscriptions-panel";
 import { DomainsPanel } from "@/components/platform/domains-panel";
+import { LogsPanel } from "@/components/platform/logs-panel";
 import { SettingsPanel } from "@/components/platform/settings-panel";
 import { AuditLogPanel, UsagePanel } from "@/components/platform/usage-panel";
 import { adminApi } from "@/lib/api/admin";
@@ -15,7 +16,7 @@ import { useAdminAuth } from "@/components/providers/admin-auth-provider";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/primitives";
 
-type Tab = "tenants" | "domains" | "plans" | "subscriptions" | "usage" | "audit" | "settings";
+type Tab = "tenants" | "domains" | "plans" | "subscriptions" | "usage" | "audit" | "logs" | "settings";
 
 interface PlatformBrand {
   platform_name: string;
@@ -78,6 +79,7 @@ export default function PlatformConsolePage(): JSX.Element {
     { id: "subscriptions", label: "Subscriptions" },
     { id: "usage", label: "Usage" },
     { id: "audit", label: "Audit log" },
+    { id: "logs", label: "Logs" },
     { id: "settings", label: "Settings" },
   ];
 
@@ -125,6 +127,7 @@ export default function PlatformConsolePage(): JSX.Element {
       {tab === "subscriptions" ? <SubscriptionsPanel /> : null}
       {tab === "usage" ? <UsagePanel /> : null}
       {tab === "audit" ? <AuditLogPanel /> : null}
+      {tab === "logs" ? <LogsPanel /> : null}
       {tab === "settings" ? (
         <SettingsPanel
           onProfileChanged={(p) => setDisplayName(p.name)}

@@ -78,5 +78,19 @@ if [ "${RUN_SETUP:-false}" = "true" ]; then
   php artisan config:clear
 fi
 
+# 3a) Production caches (config, routes, events, views): each request then boots
+#     from cached manifests. Never fatal - without caches the app still runs.
+#     Set APP_OPTIMIZE=false in .env to skip.
+if grep -qE '^APP_ENV="?(production|staging)"?$' .env 2>/dev/null \
+   && ! grep -qE '^APP_OPTIMIZE="?false"?$' .env 2>/dev/null; then
+  php artisan optimize >/dev/null 2>&1 \
+    && echo "[entrypoint] production caches built" \
+    || echo "[entrypoint] optimize failed; continuing without caches"
+fi
+
+# 3b) Allow .env to override the image's PHP_CLI_SERVER_WORKERS (parallel requests).
+workers=$(grep -E '^PHP_CLI_SERVER_WORKERS=' .env 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"')
+if [ -n "$workers" ]; then export PHP_CLI_SERVER_WORKERS="$workers"; fi
+
 # 4) Hand off to the container command.
 exec "$@"

@@ -1,0 +1,17 @@
+{
+  "_help": "Approved exceptions for the VAPT gate. Each entry needs id, reason, approved_by and expires (YYYY-MM-DD). Expired or incomplete entries are ignored (and listed in the report). id is a finding id from report.json, e.g. 'npm:GHSA-xxxx-xxxx-xxxx:next'; end it with * to match a prefix. Changes to this file should be reviewed (see deploy/SECURITY-AND-LOGGING.md).",
+  "exceptions": [
+    {
+      "id": "gitleaks:d8d07a2b6e7ca594ef985af103229a0c12370d2e:RUN.md:generic-api-key:63",
+      "reason": "Example admin password in the initial commit's RUN.md (replaced with a placeholder). Only in git history. Confirm it was never used as a real password.",
+      "approved_by": "",
+      "expires": "2027-02-15"
+    },
+    {
+      "id": "gitleaks:d8d07a2b6e7ca594ef985af103229a0c12370d2e:rosetta/.env.example:generic-api-key:8",
+      "reason": "AIRBRAKE_PROJECT_KEY in rosetta/.env.example of the initial commit; rosetta was removed from the repo. Only in git history. Rotate the key if it was ever real.",
+      "approved_by": "",
+      "expires": "2027-02-15"
+    }
+  ]
+}

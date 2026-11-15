@@ -43,3 +43,29 @@ Schedule::command('domains:verify-pending')
     ->withoutOverlapping()
     ->onOneServer()
     ->runInBackground();
+
+/*
+|--------------------------------------------------------------------------
+| Log archive + Telescope housekeeping
+|--------------------------------------------------------------------------
+| logs:archive ships finished days to the master bucket. It is idempotent, so
+| running it hourly also retries anything a previous run could not upload.
+| logs:prune removes archives past retention (never under 365 days).
+| telescope:prune keeps the live Telescope window small for performance.
+*/
+Schedule::command('logs:archive')
+    ->hourlyAt(15)
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
+
+Schedule::command('logs:prune')
+    ->dailyAt('03:30')
+    ->timezone('Asia/Kolkata')
+    ->withoutOverlapping()
+    ->onOneServer();
+
+Schedule::command('telescope:prune', ['--hours' => (int) config('telescope.prune_hours', 72)])
+    ->hourly()
+    ->withoutOverlapping()
+    ->onOneServer();

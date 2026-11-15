@@ -1,11 +1,30 @@
 <?php
 
+use App\Logging\CreateArchiveLogger;
 use Monolog\Handler\NullHandler;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
 use Monolog\Processor\PsrLogMessageProcessor;
 
 return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Log archive (master bucket) settings
+    |--------------------------------------------------------------------------
+    | Retention cannot be set below 365 days. `path` is resolved here, before
+    | tenancy can re-root storage_path() for a tenant.
+    */
+    'archive' => [
+        'path' => storage_path('logs/archive'),
+        'retention_days' => max(365, (int) env('LOG_ARCHIVE_RETENTION_DAYS', 400)),
+        'access_log' => (bool) env('LOG_ARCHIVE_ACCESS_LOG', true),
+        'slow_query_ms' => (int) env('LOG_SLOW_QUERY_MS', 500),
+        'alert_email' => env('LOG_ALERT_EMAIL'),
+        'tenant_prefix' => 'tenant-logs',
+        'platform_prefix' => 'platform-logs',
+        'timezone' => env('LOG_ARCHIVE_TIMEZONE', 'Asia/Kolkata'),
+    ],
 
     /*
     |--------------------------------------------------------------------------
@@ -54,8 +73,27 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', (string) env('LOG_STACK', 'single')),
+            // The archive channel is always appended (unless disabled), so every
+            // environment ships logs to the master bucket without editing LOG_STACK.
+            'channels' => array_values(array_unique(array_merge(
+                explode(',', (string) env('LOG_STACK', 'single')),
+                env('LOG_ARCHIVE_ENABLED', true) ? ['archive'] : [],
+            ))),
             'ignore_exceptions' => false,
+        ],
+
+        // Tenant-segregated JSON lines (IST), shipped daily to the master bucket by
+        // `logs:archive`. Its own level: production keeps LOG_LEVEL=warning for the
+        // text log while the archive still records info-level audit and access events.
+        'archive' => env('LOG_ARCHIVE_ENABLED', true) ? [
+            'driver' => 'custom',
+            'via' => CreateArchiveLogger::class,
+            'path' => storage_path('logs/archive'),
+            'level' => env('LOG_ARCHIVE_LEVEL', 'info'),
+            'timezone' => env('LOG_ARCHIVE_TIMEZONE', 'Asia/Kolkata'),
+        ] : [
+            'driver' => 'monolog',
+            'handler' => NullHandler::class,
         ],
 
         'single' => [

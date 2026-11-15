@@ -1,6 +1,7 @@
 <?php
 
 use App\Exceptions\ApiExceptionRenderer;
+use App\Http\Middleware\AssignRequestContext;
 use App\Http\Middleware\EnforceHttps;
 use App\Http\Middleware\EnsureAiReportingEnabled;
 use App\Http\Middleware\EnsureFeatureEnabled;
@@ -37,6 +38,9 @@ return Application::configure(basePath: dirname(__DIR__))
         | all upstream addresses ("*") is the default; set TRUSTED_PROXIES to a
         | comma-separated list of IPs/CIDRs to narrow it.
         */
+        // Correlation id + client IP for every request (logs, jobs, X-Request-Id header).
+        $middleware->prepend(AssignRequestContext::class);
+
         $trusted = (string) env('TRUSTED_PROXIES', '*');
         $middleware->trustProxies(
             at: $trusted === '*' ? '*' : array_map('trim', explode(',', $trusted)),

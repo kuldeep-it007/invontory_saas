@@ -245,6 +245,66 @@ export interface ProvisionTenantResponse {
 
 /* ─── Endpoints ───────────────────────────────────────────────────────────── */
 
+/** One archived log file in the master bucket. */
+export interface LogArchiveFile {
+  id: number;
+  scope: "tenant" | "platform";
+  tenant_id: string | null;
+  tenant_slug: string | null;
+  kind: "app" | "audit";
+  log_date: string;
+  path: string;
+  size: number;
+  lines: number;
+  sha256: string;
+}
+
+export interface LogSearchResult {
+  matches: { file: string; log_date: string; entry: Record<string, unknown> | string }[];
+  files_scanned: number;
+  truncated: boolean;
+}
+
+export type LogFilters = Partial<Record<"scope" | "tenant_id" | "kind" | "from" | "to" | "q" | "event" | "user_id" | "request_id" | "level", string>>;
+
+function logQuery(filters: LogFilters): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) if (value) qs.set(key, value);
+  return qs.toString();
+}
+
+/**
+ * Download a file from an authenticated admin endpoint (bearer token), then
+ * hand it to the browser as a file save.
+ */
+export async function adminDownload(path: string, fallbackName: string): Promise<void> {
+  const token = getAdminToken();
+  const base = apiBaseUrl();
+  const res = await fetch(base ? `${base}/api${path}` : `/api${path}`, {
+    headers: { Accept: "application/octet-stream", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (!res.ok) {
+    let message = res.statusText || "Download failed";
+    try {
+      const body = (await res.json()) as Partial<ApiErrorBody>;
+      message = body.error?.message ?? message;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, "download_failed", message, null);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const name = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** A tenant-owned custom domain as seen by the platform admin. */
 export interface AdminDomain {
   id: number;
@@ -354,6 +414,14 @@ export const adminApi = {
     adminRequest<{ data: AdminDomain[] }>(`/admin/domains${status ? `?status=${encodeURIComponent(status)}` : ""}`),
   disableDomain: (id: number) =>
     adminRequest<{ data: AdminDomain }>(`/admin/domains/${id}/disable`, { method: "POST" }),
+  /* Logs: Telescope access link + archived logs */
+  telescopeLink: () => adminRequest<{ data: { url: string; expires_in: number } }>("/admin/telescope/session", { method: "POST" }),
+  logArchives: (filters: LogFilters) =>
+    adminRequest<{ data: LogArchiveFile[]; meta: { total: number } }>(`/admin/log-archives?${logQuery(filters)}`),
+  searchLogs: (filters: LogFilters) => adminRequest<{ data: LogSearchResult }>(`/admin/log-archives/search?${logQuery(filters)}`),
+  downloadLogFile: (file: LogArchiveFile) =>
+    adminDownload(`/admin/log-archives/${file.id}/download`, file.path.split("/").pop() ?? "log.jsonl.gz"),
+  exportLogs: (filters: LogFilters) => adminDownload(`/admin/log-archives/export?${logQuery(filters)}`, "logs-export.zip"),
   /** Queue a forced certificate renewal (platform admin only). */
   renewDomainSsl: (id: number) =>
     adminRequest<{ data: AdminDomain }>(`/admin/domains/${id}/renew-ssl`, { method: "POST" }),

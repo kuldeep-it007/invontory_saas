@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<configuration>
+  <context>
+    <name>production</name>
+    <desc>Active scan scope for production. Excludes endpoints that would create real data or lock real accounts.</desc>
+    <inscope>true</inscope>
+    <incregexes>https://.*</incregexes>
+    <!-- Creates real prospect sign-ups -->
+    <excregexes>https://[^/]+/api/sign-up.*</excregexes>
+    <!-- Sends real password-reset emails -->
+    <excregexes>https://[^/]+/api/forgot-password.*</excregexes>
+    <!-- Brute-forcing would trip login lockouts and flood the audit log -->
+    <excregexes>https://[^/]+/api/login.*</excregexes>
+    <excregexes>https://[^/]+/api/platform/login.*</excregexes>
+    <!-- Platform-admin tooling behind its own session -->
+    <excregexes>https://[^/]+/api/telescope.*</excregexes>
+    <!-- Large static/media responses add time but no coverage -->
+    <excregexes>https://[^/]+/_next/static/.*</excregexes>
+    <excregexes>https://[^/]+/api/media/.*</excregexes>
+  </context>
+</configuration>
