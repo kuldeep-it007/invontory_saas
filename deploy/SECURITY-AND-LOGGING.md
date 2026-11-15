@@ -19,6 +19,12 @@ Everything on the server goes through `/opt/inventory/deploy.sh`, for you and fo
 
 ## 1. What runs and when
 
+> **Currently switched OFF.** The workflow does nothing until you set the repository
+> variable `VAPT_ENABLED` to `true` (Settings → Secrets and variables → Actions →
+> Variables). While it is off there are no scans, **no automatic deploys** and no reports;
+> deploy by hand with `/opt/inventory/deploy.sh update`. To switch it back on, finish the
+> setup in section 2 first, then set `VAPT_ENABLED=true`. No code change is needed.
+
 Workflow: `.github/workflows/vapt.yml`
 
 | Job | When | What |

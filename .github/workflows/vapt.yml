@@ -10,6 +10,9 @@
 #           GitHub artifact, master bucket (vapt-reports/YYYY/MM/DD/...)
 #
 # Configuration (Settings -> Secrets and variables -> Actions): see deploy/SECURITY-AND-LOGGING.md.
+#
+# ON/OFF SWITCH: nothing runs unless the repository variable VAPT_ENABLED is 'true'
+# (no scans, no automatic deploy, no report). Deploy by hand with deploy.sh meanwhile.
 name: VAPT and deploy
 
 on:
@@ -36,6 +39,9 @@ env:
 jobs:
   scan:
     name: Pre-deploy security scans
+    # Switched off until the repository variable VAPT_ENABLED is set to 'true'.
+    # deploy, dast and report depend on this job, so they are skipped too.
+    if: vars.VAPT_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -241,7 +247,7 @@ jobs:
   report:
     name: Report, email and archive
     needs: [scan, deploy, dast]
-    if: always() && github.event_name != 'pull_request'
+    if: always() && vars.VAPT_ENABLED == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
