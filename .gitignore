@@ -124,3 +124,7 @@ docker-compose.override.yml
 *.sql.gz
 *.dump
 .github
+rosetta
+rosetta/
+rosetta_1
+rosetta_1/
