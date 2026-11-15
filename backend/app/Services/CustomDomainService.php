@@ -336,17 +336,27 @@ class CustomDomainService
         return 'mismatch';
     }
 
+    /**
+     * Whether $host reaches this server: its addresses (the resolver follows any
+     * CNAME, so A and CNAME setups are checked the same way) include one of the
+     * configured server IPs.
+     *
+     * Nothing else counts. Matching the CNAME name, or the target host's own
+     * addresses, passed falsely whenever that target sat behind a proxy such as
+     * Cloudflare: the domain then reaches the proxy, never this server, and the
+     * certificate can never be issued.
+     */
     private function routesToPlatform(string $host): bool
     {
-        $target = strtolower(rtrim((string) config('domains.target_host'), '.'));
-
-        if (in_array($target, $this->dns->cname($host), true)) {
-            return true;
-        }
-
-        $ips = (array) config('domains.target_ips') ?: $this->dns->a($target);
+        $ips = $this->serverIps();
 
         return $ips !== [] && array_intersect($ips, $this->dns->a($host)) !== [];
+    }
+
+    /** @return list<string> */
+    private function serverIps(): array
+    {
+        return array_values(array_filter((array) config('domains.target_ips')));
     }
 
     private function advancePending(Domain $domain, string $ownership, bool $routing): void
@@ -449,7 +459,17 @@ class CustomDomainService
             return 'A TXT record exists but its value does not match. Copy the value exactly.';
         }
 
-        return $routing ? null : 'Routing record not found. Point the domain at the address shown so HTTPS can be issued.';
+        if ($routing) {
+            return null;
+        }
+
+        if ($this->serverIps() === []) {
+            Log::warning('custom_domain.server_ip_missing', ['hint' => 'Set CUSTOM_DOMAIN_TARGET_IPS to the server public IP.']);
+
+            return 'The platform has not finished setting up custom domains yet (no server address configured). Please contact support.';
+        }
+
+        return 'Your domain does not point at our server yet. Add the routing record shown. If it is on Cloudflare, set it to "DNS only".';
     }
 
     private function zoneOf(string $host): string

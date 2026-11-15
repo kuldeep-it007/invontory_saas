@@ -127,7 +127,8 @@ function proveOwnership(Domain $domain, bool $routing = true): void
 {
     fakeDns(
         txt: [$domain->txtRecordName() => [$domain->txtRecordValue()]],
-        cname: $routing ? [$domain->domain => ['domains.platform.test']] : [],
+        // The resolver follows CNAMEs, so a domain that reaches the server resolves to its IP.
+        a: $routing ? [$domain->domain => ['203.0.113.10']] : [],
     );
 }
 
@@ -264,6 +265,46 @@ describe('verifying a domain', function () {
         expect(domainService()->verify($domain)->routing_ok)->toBeTrue();
     });
 
+    it('does not pass routing when the domain points at a proxy instead of the server', function (array $answers) {
+        $domain = domainService()->add(makeTenant('acme'), 'shop.example.com', null);
+        fakeDns(...array_merge(['txt' => [$domain->txtRecordName() => [$domain->txtRecordValue()]]], $answers));
+
+        $domain = domainService()->verify($domain);
+
+        expect($domain->status)->toBe(Domain::STATUS_ACTIVE)
+            ->and($domain->routing_ok)->toBeFalse()
+            ->and($domain->last_error)->toContain('does not point at our server');
+    })->with([
+        // Both names resolve to the same Cloudflare addresses: they "match" each other, not the server.
+        'A record to the proxied target host IPs' => [['a' => ['shop.example.com' => ['104.21.88.254'], 'domains.platform.test' => ['104.21.88.254']]]],
+        'CNAME to a proxied target host' => [['cname' => ['shop.example.com' => ['domains.platform.test']], 'a' => ['shop.example.com' => ['104.21.88.254']]]],
+    ]);
+
+    it('never passes routing and says why when no server IP is configured', function () {
+        config(['domains.target_ips' => []]);
+        $domain = domainService()->add(makeTenant('acme'), 'shop.example.com', null);
+        fakeDns(
+            txt: [$domain->txtRecordName() => [$domain->txtRecordValue()]],
+            a: ['shop.example.com' => ['104.21.88.254'], 'domains.platform.test' => ['104.21.88.254']],
+            cname: ['shop.example.com' => ['domains.platform.test']],
+        );
+
+        $domain = domainService()->verify($domain);
+
+        expect($domain->routing_ok)->toBeFalse()
+            ->and($domain->last_error)->toContain('no server address configured');
+    });
+
+    it('clears a stale routing pass when an active domain is checked again', function () {
+        $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com', ['routing_ok' => true]);
+        fakeDns(
+            txt: [$domain->txtRecordName() => [$domain->txtRecordValue()]],
+            a: ['shop.example.com' => ['104.21.88.254']],
+        );
+
+        expect(domainService()->verify($domain)->routing_ok)->toBeFalse();
+    });
+
     it('activates but reports missing routing when DNS does not point at the platform', function () {
         $domain = domainService()->add(makeTenant('acme'), 'shop.example.com', null);
         proveOwnership($domain, routing: false);
@@ -272,7 +313,7 @@ describe('verifying a domain', function () {
 
         expect($domain->status)->toBe(Domain::STATUS_ACTIVE)
             ->and($domain->routing_ok)->toBeFalse()
-            ->and($domain->last_error)->toContain('Routing record');
+            ->and($domain->last_error)->toContain('does not point at our server');
     });
 
     it('stays pending with a hint when the TXT record is missing', function () {
@@ -364,7 +405,7 @@ describe('verifying a domain', function () {
 
     it('flags an active domain whose TXT record disappeared without disabling it', function () {
         $domain = activeCustomDomain(makeTenant('acme'), 'shop.example.com');
-        fakeDns(cname: ['shop.example.com' => ['domains.platform.test']]);
+        fakeDns(a: ['shop.example.com' => ['203.0.113.10']]);
 
         $domain = domainService()->verify($domain);
 

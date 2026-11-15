@@ -133,7 +133,8 @@ function DomainRow({ d, canEdit }: { d: CustomDomain; canEdit: boolean }): JSX.E
 
   const isCustom = d.type === "custom";
   const needsRecords = isCustom && (d.status === "pending" || d.status === "failed" || !d.routing_ok);
-  const canBePrimary = d.status === "active" && (!isCustom || d.ssl_status === "issued");
+  // A bare platform label (e.g. "company") has no single host to redirect to.
+  const canBePrimary = d.status === "active" && d.domain.includes(".") && (!isCustom || d.ssl_status === "issued");
 
   return (
     <li className="space-y-3 rounded-lg border border-border p-4">
