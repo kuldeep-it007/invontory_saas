@@ -89,7 +89,8 @@ if grep -qE '^APP_ENV="?(production|staging)"?$' .env 2>/dev/null \
 fi
 
 # 3b) Allow .env to override the image's PHP_CLI_SERVER_WORKERS (parallel requests).
-workers=$(grep -E '^PHP_CLI_SERVER_WORKERS=' .env 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"')
+#     sed (not grep) because finding nothing must not fail under `set -euo pipefail`.
+workers=$(sed -n 's/^PHP_CLI_SERVER_WORKERS="\{0,1\}\([0-9][0-9]*\)"\{0,1\}$/\1/p' .env 2>/dev/null | tail -n1 || true)
 if [ -n "$workers" ]; then export PHP_CLI_SERVER_WORKERS="$workers"; fi
 
 # 4) Hand off to the container command.
