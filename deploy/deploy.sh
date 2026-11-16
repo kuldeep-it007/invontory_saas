@@ -34,6 +34,7 @@
 #   Logs         archive-logs   prune-logs   prune-telescope [hours]
 #   App          artisan <command ...>    restart [service ...]
 #   Server       swap  (top swap up to SWAP_SIZE_GB, default 5 GB, on small servers)
+#                diagnose  (why the API is not healthy: state, health checks, memory, logs)
 #   CI / VAPT    github-setup  (one-time: deploy key for GitHub Actions, limited to
 #                update + server-audit)   server-audit  (Lynis report)#
 # NON-INTERACTIVE: export the variables below instead of answering prompts, e.g.
@@ -618,15 +619,39 @@ start_stack() {
     compose build || die "image build failed twice. The running site is unchanged. Check the error above, then run: $0 update"
   fi
   step "Starting containers"
-  compose up -d --remove-orphans
+  if ! compose up -d --remove-orphans; then
+    diagnose_api
+    die "containers did not start. The cause is in the API log above. Fix it, then run: $0 update"
+  fi
   log "waiting for the API (runs database migrations on first start)…"
   if ! wait_http "http://127.0.0.1:8000/up" 900; then
-    compose logs --tail=80 api || true
-    die "API did not become healthy. See logs above (deploy.sh logs api)."
+    diagnose_api
+    die "API did not become healthy. See the log above."
   fi
   wait_http "http://127.0.0.1:3000/" 120 || { compose logs --tail=60 frontend || true; die "frontend did not start"; }
   log "API and frontend are up"
 }
+
+# Everything needed to see why the API is not healthy, in one place.
+diagnose_api() {
+  local id
+  step "API diagnostics"
+  compose ps || true
+  id=$( (compose ps -aq api 2>/dev/null | head -n1) || true)
+  if [ -n "$id" ]; then
+    log "container state: $(docker inspect -f '{{.State.Status}} (restarts: {{.RestartCount}}, exit code: {{.State.ExitCode}}, OOM-killed: {{.State.OOMKilled}})' "$id" 2>/dev/null)"
+    log "last health checks:"
+    docker inspect -f '{{range .State.Health.Log}}{{.End}} exit={{.ExitCode}} {{.Output}}{{"\n"}}{{end}}' "$id" 2>/dev/null | tail -n 3 | sed 's/^/      /' || true
+  fi
+  log "memory:"; free -m | sed 's/^/      /'
+  log "last 120 API log lines:"
+  compose logs --no-color --tail=120 api 2>&1 | sed 's/^/      /' || true
+  log "Laravel log (last 40 lines):"
+  compose exec -T api sh -c 'tail -n 40 storage/logs/laravel.log 2>/dev/null' 2>/dev/null | sed 's/^/      /' || true
+}
+
+# Same diagnostics on demand.
+cmd_diagnose() { preflight >/dev/null; diagnose_api; }
 
 post_deploy() {
   step "Post-deploy tasks"
@@ -1334,6 +1359,7 @@ main() {
     restart) cmd_restart "$@" ;;
     server-audit) cmd_server_audit ;;
     swap) cmd_swap ;;
+    diagnose) cmd_diagnose ;;
     github-setup) cmd_github_setup ;;
     ci) cmd_ci ;;    -h|--help|help) usage ;;
     *) die "unknown command '$cmd' (run '$0 help' for the list)" ;;
