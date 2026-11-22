@@ -31,7 +31,7 @@ export default function CategoriesPage(): JSX.Element {
   const { confirm, toast } = useAlerts();
   const canManage = can("catalog.manage");
 
-  const categories = useCategories();
+  const categories = useCategories("mine");
   const del = useDeleteCatalogAttribute();
   const upd = useUpdateCatalogAttribute();
   const [actionError, setActionError] = useState<string | null>(null);

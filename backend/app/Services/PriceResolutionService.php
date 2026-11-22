@@ -24,6 +24,8 @@ use InvalidArgumentException;
  *      Discounts are never combined. A discount is a percentage or a fixed
  *      amount. Ties at the same level go to the more specific catalog scope
  *      (product > colour > collection > category), then the larger saving.
+ *      Only discounts owned by the product's owner apply, plus, for a dealer
+ *      buyer, discounts owned by the dealer's distributor.
  *   4. CLAMP so the price is NEVER negative (R12.4).
  *
  * Amounts are in the tenant's single currency (R39.1). {@see computePrice()}
@@ -212,7 +214,17 @@ class PriceResolutionService
         $best = null;
         $bestKey = null;
 
+        $productOwner = $product->owner_distributor_id === null ? null : (int) $product->owner_distributor_id;
+        $servingDistributor = $dealerId !== null ? $distributorId : null;
+
         foreach ($candidates as $discount) {
+            // Each owner prices its own products; a distributor may also
+            // discount anything for its own dealers.
+            $discountOwner = $discount->owner_distributor_id;
+            if ($discountOwner !== $productOwner && ($discountOwner === null || $discountOwner !== $servingDistributor)) {
+                continue;
+            }
+
             if (($discount->product_id !== null && $discount->product_id !== (int) $product->getKey())
                 || ($discount->colour_id !== null && $discount->colour_id !== (int) $product->colour_id)
                 || ($discount->collection_id !== null && $discount->collection_id !== (int) $product->collection_id)

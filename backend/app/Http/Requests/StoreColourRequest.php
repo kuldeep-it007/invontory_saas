@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Support\CatalogOwner;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -24,8 +25,8 @@ class StoreColourRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'collection_id' => ['required', 'integer', 'exists:tenant.collections,id'],
-            'code' => ['sometimes', 'nullable', 'string', 'max:64', 'unique:tenant.colours,code'],
+            'collection_id' => ['required', 'integer', CatalogOwner::ownedExistsRule($this->user(), 'collections')],
+            'code' => ['sometimes', 'nullable', 'string', 'max:64', CatalogOwner::ownedUniqueRule($this->user(), 'colours', 'code')],
             'name' => ['required', 'string', 'max:255'],
             'active' => ['sometimes', 'boolean'],
         ];

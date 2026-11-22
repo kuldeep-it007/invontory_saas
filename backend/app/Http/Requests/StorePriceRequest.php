@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Requests;
 
 use App\Models\Price;
+use App\Support\CatalogOwner;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -31,11 +32,12 @@ class StorePriceRequest extends FormRequest
     public function rules(): array
     {
         $level = $this->input('level');
-        $refTable = $level === Price::LEVEL_PRODUCT ? 'tenant.products' : 'tenant.collections';
+        $refTable = $level === Price::LEVEL_PRODUCT ? 'products' : 'collections';
 
         return [
             'level' => ['required', 'string', Rule::in(Price::LEVELS)],
-            'ref_id' => ['required', 'integer', Rule::exists($refTable, 'id')],
+            // The product/collection must belong to the actor's own catalogue.
+            'ref_id' => ['required', 'integer', CatalogOwner::ownedExistsRule($this->user(), $refTable)],
             'amount' => ['required', 'numeric', 'min:0'],
             'markup_type' => ['sometimes', 'nullable', Rule::in(Price::MARKUP_TYPES)],
             'markup_value' => ['sometimes', 'nullable', 'numeric', 'min:0'],

@@ -32,8 +32,8 @@ export default function CollectionsPage(): JSX.Element {
   const canManage = can("catalog.manage");
 
   const { confirm, toast } = useAlerts();
-  const categories = useCategories();
-  const collections = useCollections();
+  const categories = useCategories("mine");
+  const collections = useCollections("mine");
   const del = useDeleteCatalogAttribute();
   const upd = useUpdateCatalogAttribute();
   const [actionError, setActionError] = useState<string | null>(null);

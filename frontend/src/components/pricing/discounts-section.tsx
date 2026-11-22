@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { useAlerts } from "@/components/providers/alerts-provider";
+import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Select } from "@/components/ui/form";
@@ -156,9 +157,9 @@ export function DiscountsSection({ canManage }: { canManage: boolean }): JSX.Ele
 
 function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
   const { create } = useDiscountMutations();
-  const categories = useCategories();
-  const collections = useCollections();
-  const colours = useColours();
+  const categories = useCategories("mine");
+  const collections = useCollections("mine");
+  const colours = useColours("mine");
 
   const empty = {
     type: "customer",
@@ -177,9 +178,18 @@ function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }
   const [form, setForm] = useState(empty);
   const [error, setError] = useState<string | null>(null);
 
+  // A distributor user discounts for its own dealers or for other distributors;
+  // the server enforces the same rule.
+  const { identity } = useAuth();
+  const ownDistributorId = identity && !identity.dealer_id ? (identity.distributor_id ?? null) : null;
+  const dealerParentId =
+    form.buyer_type !== "dealer" ? null : (ownDistributorId ?? (form.distributor_id ? Number(form.distributor_id) : null));
+  const showDistributorPicker =
+    form.buyer_type === "distributor" || (form.buyer_type === "dealer" && ownDistributorId === null);
+
   const distributors = useDistributorOptions();
-  const dealers = useDealerOptions(form.buyer_type === "dealer" && form.distributor_id ? Number(form.distributor_id) : null);
-  const products = useProductOptions();
+  const dealers = useDealerOptions(dealerParentId);
+  const products = useProductOptions("mine");
 
   const isFixed = form.value_type === "fixed";
   const buyerId = form.buyer_type === "dealer" ? form.dealer_id : form.buyer_type === "distributor" ? form.distributor_id : "";
@@ -298,16 +308,18 @@ function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }
           value={form.buyer_type}
           onChange={(v) => setForm({ ...form, buyer_type: v, distributor_id: "", dealer_id: "" })}
           options={[
-            { value: "distributor", label: "A specific distributor" },
-            { value: "dealer", label: "A specific dealer" },
+            { value: "distributor", label: ownDistributorId ? "Another distributor" : "A specific distributor" },
+            { value: "dealer", label: ownDistributorId ? "One of my dealers" : "A specific dealer" },
           ]}
         />
-        {form.buyer_type !== "" ? (
+        {showDistributorPicker ? (
           <Select
             label="Distributor"
             value={form.distributor_id}
             onChange={(v) => setForm({ ...form, distributor_id: v, dealer_id: "" })}
-            options={(distributors.data?.data ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
+            options={(distributors.data?.data ?? [])
+              .filter((d) => d.id !== ownDistributorId)
+              .map((d) => ({ value: String(d.id), label: d.name }))}
           />
         ) : null}
         {form.buyer_type === "dealer" ? (

@@ -162,9 +162,9 @@ export const prospectApi = {
 export const catalogApi = {
   catalog: (query?: Record<string, string | number>) =>
     api.get<Paginated<Product>>("/catalog", query),
-  categories: () => api.get<Paginated<CatalogAttribute>>("/categories"),
-  collections: () => api.get<Paginated<Collection>>("/collections"),
-  colours: () => api.get<Paginated<Colour>>("/colours"),
+  categories: (owner?: CatalogOwnerFilter) => api.get<Paginated<CatalogAttribute>>("/categories", ownerQuery(owner)),
+  collections: (owner?: CatalogOwnerFilter) => api.get<Paginated<Collection>>("/collections", ownerQuery(owner)),
+  colours: (owner?: CatalogOwnerFilter) => api.get<Paginated<Colour>>("/colours", ownerQuery(owner)),
   createCategory: (name: string) =>
     api.post<Resource<CatalogAttribute>>("/categories", { name }),
   createCollection: (categoryId: number, name: string) =>
@@ -196,9 +196,19 @@ export const priceApi = {
   deleteDiscount: (id: number) => api.del<{ message: string }>(`/discounts/${id}`),
 };
 
+/**
+ * Catalogue lists return the Company's (orderable) catalogue by default;
+ * `"mine"` returns the caller's own rows for the management screens.
+ */
+export type CatalogOwnerFilter = "mine";
+
+function ownerQuery(owner?: CatalogOwnerFilter): Record<string, string> {
+  return owner ? { owner } : {};
+}
+
 export const productApi = {
-  list: (page = 1, perPage = 25) =>
-    api.get<Paginated<Product>>("/products", { page, per_page: perPage }),
+  list: (page = 1, perPage = 25, owner?: CatalogOwnerFilter) =>
+    api.get<Paginated<Product>>("/products", { page, per_page: perPage, ...ownerQuery(owner) }),
   create: (payload: Record<string, unknown>) => api.post<Resource<Product>>("/products", payload),
   update: (id: number, payload: Record<string, unknown>) =>
     api.patch<Resource<Product>>(`/products/${id}`, payload),

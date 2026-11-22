@@ -32,8 +32,8 @@ export default function ColoursPage(): JSX.Element {
   const canManage = can("catalog.manage");
 
   const { confirm, toast } = useAlerts();
-  const collections = useCollections();
-  const colours = useColours();
+  const collections = useCollections("mine");
+  const colours = useColours("mine");
   const del = useDeleteCatalogAttribute();
   const upd = useUpdateCatalogAttribute();
   const [actionError, setActionError] = useState<string | null>(null);

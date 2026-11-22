@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Services\PriceResolutionService;
 use App\Services\ProductService;
 use App\Services\ResolvedPrice;
+use App\Support\CatalogOwner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -28,12 +29,15 @@ class ProductController extends Controller
 
     /**
      * GET /api/products — paginated product list with the catalog hierarchy
-     * eager-loaded (R11.3). Paginated and eager-loaded per the list-endpoint
-     * convention.
+     * eager-loaded (R11.3). Company-owned products by default (the orderable
+     * catalogue); the caller's own products with `?owner=mine`.
      */
     public function index(Request $request): JsonResponse
     {
-        $page = $this->products->paginate(max(1, min($request->integer('per_page', 25), 100)));
+        $page = $this->products->paginate(
+            CatalogOwner::listKeyFor($request->user(), $request->query('owner')),
+            max(1, min($request->integer('per_page', 25), 100)),
+        );
         $resolved = $this->prices->resolveMany($page->getCollection());
         $page->getCollection()->each(fn (Product $product) => $this->attachPricing($product, $resolved[(int) $product->getKey()] ?? null));
 
@@ -70,7 +74,10 @@ class ProductController extends Controller
      */
     public function store(StoreProductRequest $request): JsonResponse
     {
-        $product = $this->withPricing($this->products->create($request->validated()));
+        $product = $this->withPricing($this->products->create(
+            $request->validated(),
+            CatalogOwner::distributorColumnFor($request->user()),
+        ));
 
         return response()->json(['data' => $product], 201);
     }
@@ -89,8 +96,9 @@ class ProductController extends Controller
      * DELETE /api/products/{product} — delete a product (R11.3). Frees a
      * `max_products` quota slot; the service invalidates the cached count.
      */
-    public function destroy(Product $product): JsonResponse
+    public function destroy(Request $request, Product $product): JsonResponse
     {
+        CatalogOwner::assertManages($request->user(), $product);
         $this->products->delete($product);
 
         return response()->json(['message' => 'Product deleted.']);

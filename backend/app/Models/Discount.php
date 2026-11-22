@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Models\Concerns\TenantAuditable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use InvalidArgumentException;
 use OwenIt\Auditing\Contracts\Auditable;
@@ -89,6 +91,7 @@ class Discount extends Model implements Auditable
         'percentage' => 'decimal:4',
         'amount' => 'decimal:2',
         'product_id' => 'integer',
+        'owner_distributor_id' => 'integer',
         'is_active' => 'boolean',
         'category_id' => 'integer',
         'collection_id' => 'integer',
@@ -186,6 +189,30 @@ class Discount extends Model implements Auditable
         }
 
         $this->attributes['type'] = $type;
+    }
+
+    /**
+     * The distributor that owns (manages) this discount; null = the Company.
+     * Set server-side, never mass-assigned.
+     *
+     * @return BelongsTo<Distributor, $this>
+     */
+    public function ownerDistributor(): BelongsTo
+    {
+        return $this->belongsTo(Distributor::class, 'owner_distributor_id');
+    }
+
+    /**
+     * Discounts managed by one owner key (0 = Company).
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeOwnedBy(Builder $query, int $ownerKey): Builder
+    {
+        return $ownerKey === 0
+            ? $query->whereNull($this->qualifyColumn('owner_distributor_id'))
+            : $query->where($this->qualifyColumn('owner_distributor_id'), $ownerKey);
     }
 
     /**

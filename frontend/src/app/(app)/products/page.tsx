@@ -37,7 +37,7 @@ export default function ProductsPage(): JSX.Element {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Product | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const { data, isLoading, error } = useProducts(page);
+  const { data, isLoading, error } = useProducts(page, "mine");
   const del = useDeleteProduct();
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -158,9 +158,9 @@ function ProductModal({
   const create = useCreateProduct();
   const update = useUpdateProduct();
   const { toast } = useAlerts();
-  const categories = useCategories();
-  const collections = useCollections();
-  const colours = useColours();
+  const categories = useCategories("mine");
+  const collections = useCollections("mine");
+  const colours = useColours("mine");
 
   const isEdit = product !== null;
 

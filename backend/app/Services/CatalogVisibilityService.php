@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Http\Controllers\CatalogController;
 use App\Models\ActiveProductAttribute;
 use App\Models\Category;
 use App\Models\Collection;
 use App\Models\Colour;
 use App\Models\Product;
+use App\Support\CatalogOwner;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -17,7 +19,7 @@ use Illuminate\Database\Eloquent\Model;
  * Resolves the catalog a specific Buyer may browse (R11.4, R11.5, R11.6).
  *
  * Focused single-responsibility service the thin
- * {@see \App\Http\Controllers\CatalogController} delegates to for the
+ * {@see CatalogController} delegates to for the
  * `GET /catalog` endpoint. All work runs on the active tenant connection
  * (resolved by the tenancy middleware), so visibility is computed entirely
  * within the current tenant's database (physical isolation).
@@ -60,7 +62,7 @@ class CatalogVisibilityService
      */
     public function paginateForAll(int $perPage = 25): LengthAwarePaginator
     {
-        return $this->withCatalog(Product::query())->paginate($perPage);
+        return $this->withCatalog(Product::query()->ownedBy(CatalogOwner::COMPANY))->paginate($perPage);
     }
 
     /**
@@ -88,7 +90,9 @@ class CatalogVisibilityService
     {
         $allowed = $this->allowedAttributeIds($buyer);
 
-        $query = Product::query();
+        // Orderable catalogue = Company-owned products. Distributor-owned products
+        // become orderable with network ordering.
+        $query = Product::query()->ownedBy(CatalogOwner::COMPANY);
 
         // Unconfigured Buyer: no restriction, the whole catalog is visible (R11.6).
         if ($allowed['total'] === 0) {

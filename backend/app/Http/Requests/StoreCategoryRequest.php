@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Support\CatalogOwner;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -23,7 +24,7 @@ class StoreCategoryRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'code' => ['sometimes', 'nullable', 'string', 'max:64', 'unique:tenant.categories,code'],
+            'code' => ['sometimes', 'nullable', 'string', 'max:64', CatalogOwner::ownedUniqueRule($this->user(), 'categories', 'code')],
             'name' => ['required', 'string', 'max:255'],
             'active' => ['sometimes', 'boolean'],
         ];

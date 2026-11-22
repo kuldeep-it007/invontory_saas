@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Models\Product;
+use App\Support\CatalogOwner;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -16,8 +18,17 @@ use Illuminate\Validation\Rule;
  */
 class UpdateProductRequest extends FormRequest
 {
+    /**
+     * Only the product's owner may edit it; anyone else gets 404 before
+     * validation runs.
+     */
     public function authorize(): bool
     {
+        $product = $this->route('product');
+        if ($product instanceof Product) {
+            CatalogOwner::assertManages($this->user(), $product);
+        }
+
         return true;
     }
 
@@ -34,7 +45,7 @@ class UpdateProductRequest extends FormRequest
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('tenant.products', 'sku')->ignore($productId),
+                CatalogOwner::ownedUniqueRule($this->user(), 'products', 'sku', $productId),
             ],
             // Mandatory: required when the product has no HSN yet; never cleared.
             'hsn_code' => [Rule::requiredIf(fn (): bool => blank($this->route('product')?->hsn_code)), 'string', 'regex:/^(\d{4}|\d{6}|\d{8})$/'],
@@ -42,8 +53,8 @@ class UpdateProductRequest extends FormRequest
             // Base selling amount maintained with the product (R11.3). Optional,
             // and may be explicitly cleared by sending null.
             'price' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'collection_id' => ['sometimes', 'required', 'integer', 'exists:tenant.collections,id'],
-            'colour_id' => ['sometimes', 'required', 'integer', 'exists:tenant.colours,id'],
+            'collection_id' => ['sometimes', 'required', 'integer', CatalogOwner::ownedExistsRule($this->user(), 'collections')],
+            'colour_id' => ['sometimes', 'required', 'integer', CatalogOwner::ownedExistsRule($this->user(), 'colours')],
             'tax_type' => ['sometimes', 'required', 'string', 'max:255'],
             'uom' => ['sometimes', 'required', 'string', 'max:255'],
         ];

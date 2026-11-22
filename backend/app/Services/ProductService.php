@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\QuotaExceededException;
+use App\Http\Controllers\ProductController;
 use App\Models\PlanLimit;
 use App\Models\Product;
+use App\Support\CatalogOwner;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 /**
  * Product catalog management (R11.1, R11.3, R5.1).
  *
- * Focused single-responsibility service the thin {@see \App\Http\Controllers\ProductController}
+ * Focused single-responsibility service the thin {@see ProductController}
  * delegates to. Responsibilities:
  *
  *   • Create a Product only after the `max_products` quota is satisfied
@@ -37,9 +40,10 @@ class ProductService
      *
      * @return LengthAwarePaginator<int, Product>
      */
-    public function paginate(int $perPage = 25): LengthAwarePaginator
+    public function paginate(int $ownerKey = CatalogOwner::COMPANY, int $perPage = 25): LengthAwarePaginator
     {
         return Product::query()
+            ->ownedBy($ownerKey)
             ->with(['collection.category', 'colour'])
             ->orderBy('sku')
             ->paginate($perPage);
@@ -56,13 +60,15 @@ class ProductService
      *
      * @param  array{sku: string, name: string, collection_id: int, colour_id: int, tax_type: string, uom: string}  $attributes
      *
-     * @throws \App\Exceptions\QuotaExceededException when the product quota is reached (HTTP 403).
+     * @throws QuotaExceededException when the product quota is reached (HTTP 403).
      */
-    public function create(array $attributes): Product
+    public function create(array $attributes, ?int $ownerDistributorId = null): Product
     {
         $this->quota->assertAllows(PlanLimit::MAX_PRODUCTS);
 
-        $product = Product::create($attributes);
+        $product = new Product($attributes);
+        $product->owner_distributor_id = $ownerDistributorId;
+        $product->save();
 
         // A new counted resource exists: drop the stale cached count so the
         // next quota comparison and usage snapshot recompute (R5.6).

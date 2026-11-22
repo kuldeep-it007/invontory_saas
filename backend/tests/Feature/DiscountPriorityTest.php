@@ -41,6 +41,7 @@ beforeEach(function () {
         '2026_10_20_000002_add_scope_to_discounts_table.php',
         '2026_11_01_000001_add_price_to_products_table.php',
         '2026_11_29_000001_add_hsn_code_and_flexible_discounts.php',
+        '2026_11_30_000001_add_catalog_ownership.php',
     ] as $file) {
         Artisan::call('migrate', ['--realpath' => true, '--force' => true, '--path' => [database_path('migrations/tenant/'.$file)]]);
     }

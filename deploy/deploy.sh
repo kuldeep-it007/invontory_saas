@@ -658,6 +658,11 @@ post_deploy() {
   log "migrating tenant databases (no-op when there are no tenants yet)"
   compose exec -T api php artisan tenants:migrate --force \
     || warn "tenants:migrate reported a problem — check: deploy.sh logs api"
+  # Re-sync role permissions (idempotent) so changes in app/Auth/Roles.php
+  # reach tenants that already exist.
+  log "syncing tenant role permissions"
+  compose exec -T api php artisan tenants:seed --class='Database\Seeders\RoleSeeder' --force \
+    || warn "tenants:seed RoleSeeder reported a problem — check: deploy.sh logs api"
 
   if [ "${ADMIN_CREATED:-0}" != "1" ]; then
     log "creating the first Platform Admin ($ADMIN_EMAIL)"
