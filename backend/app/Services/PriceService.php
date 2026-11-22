@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Http\Controllers\PriceController;
 use App\Models\Discount;
 use App\Models\Price;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -11,7 +12,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 /**
  * Price & discount catalog management (R12.1, R12.2, R12.3).
  *
- * Focused single-responsibility service the thin {@see \App\Http\Controllers\PriceController}
+ * Focused single-responsibility service the thin {@see PriceController}
  * delegates to. It owns the configuration side of pricing — creating and
  * listing Prices (product/collection level, markup/MUP) and Discounts (the two
  * supported `customer`/`online` types). The RUNTIME resolution of an order-line
@@ -67,7 +68,7 @@ class PriceService
      */
     public function createDiscount(array $attributes): Discount
     {
-        return Discount::create($attributes);
+        return Discount::create($this->normalizeDiscount($attributes));
     }
 
     /**
@@ -77,9 +78,37 @@ class PriceService
      */
     public function updateDiscount(Discount $discount, array $attributes): Discount
     {
-        $discount->fill($attributes)->save();
+        $discount->fill($this->normalizeDiscount($attributes, $discount))->save();
 
         return $discount->refresh();
+    }
+
+    /**
+     * Keep the value columns consistent with the value type: a fixed discount
+     * stores its `amount` (percentage 0); a percent discount stores its
+     * `percentage` (amount null). A buyer scope is kept or cleared as a pair.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @return array<string, mixed>
+     */
+    private function normalizeDiscount(array $attributes, ?Discount $existing = null): array
+    {
+        $type = $attributes['value_type'] ?? $existing?->value_type ?? Discount::VALUE_PERCENT;
+        $attributes['value_type'] = $type;
+        if ($type === Discount::VALUE_FIXED) {
+            $attributes['percentage'] = 0;
+        } else {
+            $attributes['amount'] = null;
+            if (array_key_exists('percentage', $attributes) && $attributes['percentage'] === null) {
+                unset($attributes['percentage']);
+            }
+        }
+        if (array_key_exists('buyer_type', $attributes) && empty($attributes['buyer_type'])) {
+            $attributes['buyer_type'] = null;
+            $attributes['buyer_id'] = null;
+        }
+
+        return $attributes;
     }
 
     /** Delete a Discount. */

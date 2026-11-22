@@ -36,6 +36,8 @@ class UpdateProductRequest extends FormRequest
                 'max:255',
                 Rule::unique('tenant.products', 'sku')->ignore($productId),
             ],
+            // Mandatory: required when the product has no HSN yet; never cleared.
+            'hsn_code' => [Rule::requiredIf(fn (): bool => blank($this->route('product')?->hsn_code)), 'string', 'regex:/^(\d{4}|\d{6}|\d{8})$/'],
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             // Base selling amount maintained with the product (R11.3). Optional,
             // and may be explicitly cleared by sending null.

@@ -71,10 +71,16 @@ export default function ProductsPage(): JSX.Element {
   const columns: Column<Product>[] = [
     { header: "SKU", cell: (p) => <span className="font-mono text-xs">{p.sku}</span> },
     { header: "Name", cell: (p) => <span className="font-medium">{p.name}</span> },
+    { header: "HSN", cell: (p) => <span className="font-mono text-xs">{p.hsn_code ?? "—"}</span> },
     {
       header: "Price",
       className: "text-right tabular-nums",
       cell: (p) => (p.price != null && p.price !== "" ? Number(p.price).toFixed(2) : "—"),
+    },
+    {
+      header: "Final price",
+      className: "text-right tabular-nums",
+      cell: (p) => <FinalPrice product={p} />,
     },
     { header: "Tax", cell: (p) => p.tax_type ?? "—" },
     { header: "UoM", cell: (p) => p.uom ?? "—" },
@@ -160,6 +166,7 @@ function ProductModal({
 
   const initial = {
     sku: product?.sku ?? "",
+    hsn_code: product?.hsn_code ?? "",
     name: product?.name ?? "",
     price: product?.price != null ? String(product.price) : "",
     tax_type: product?.tax_type ?? "",
@@ -189,6 +196,7 @@ function ProductModal({
     setError(null);
     const payload = {
       sku: form.sku,
+      hsn_code: form.hsn_code.trim(),
       name: form.name,
       price: form.price === "" ? null : Number(form.price),
       tax_type: form.tax_type || null,
@@ -212,6 +220,7 @@ function ProductModal({
   }
 
   const busy = create.isPending || update.isPending;
+  const hsnValid = HSN_PATTERN.test(form.hsn_code.trim());
 
   return (
     <Modal
@@ -224,7 +233,7 @@ function ProductModal({
           formId="product-form"
           submitLabel={isEdit ? "Save changes" : "Create product"}
           busy={busy}
-          disabled={!form.sku || !form.name}
+          disabled={!form.sku || !form.name || !hsnValid}
           onCancel={close}
         />
       }
@@ -232,6 +241,17 @@ function ProductModal({
       <form id="product-form" onSubmit={submit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="SKU" required value={form.sku} onChange={(v) => setForm({ ...form, sku: v })} />
         <Field label="Name" required value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
+        <div className="space-y-1">
+          <Field
+            label="HSN code"
+            required
+            value={form.hsn_code}
+            onChange={(v) => setForm({ ...form, hsn_code: v.replace(/\D/g, "").slice(0, 8) })}
+          />
+          <p className={`text-xs ${form.hsn_code && !hsnValid ? "text-danger" : "text-muted-foreground"}`}>
+            4, 6 or 8 digits.
+          </p>
+        </div>
         <Field label="Price" type="number" value={form.price} onChange={(v) => setForm({ ...form, price: v })} />
         <Field label="Tax type" value={form.tax_type} onChange={(v) => setForm({ ...form, tax_type: v })} />
         <Field label="Unit of measure" value={form.uom} onChange={(v) => setForm({ ...form, uom: v })} />
@@ -268,5 +288,30 @@ function ProductModal({
         ) : null}
       </form>
     </Modal>
+  );
+}
+
+/** HSN codes are 4, 6 or 8 digits (mirrors the server rule). */
+const HSN_PATTERN = /^(\d{4}|\d{6}|\d{8})$/;
+
+/**
+ * Server-resolved price for a general buyer. Shows the single applied
+ * discount (percent or fixed) under the final amount when one exists.
+ */
+function FinalPrice({ product }: { product: Product }): JSX.Element {
+  const pricing = product.pricing;
+  if (!pricing) return <>—</>;
+  const discount = pricing.discount;
+  return (
+    <div className="leading-tight">
+      <div>{Number(pricing.final_price).toFixed(2)}</div>
+      {discount && discount.amount > 0 ? (
+        <div className="text-xs text-muted-foreground">
+          {discount.type === "fixed"
+            ? `-${Number(discount.value ?? 0).toFixed(2)}`
+            : `-${Number(discount.value ?? 0)}%`}
+        </div>
+      ) : null}
+    </div>
   );
 }

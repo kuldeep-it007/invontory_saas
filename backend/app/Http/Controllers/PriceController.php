@@ -6,15 +6,20 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreDiscountRequest;
 use App\Http\Requests\StorePriceRequest;
+use App\Models\Discount;
+use App\Models\Price;
+use App\Services\PriceResolutionService;
 use App\Services\PriceService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 /**
  * Pricing & discount configuration endpoints (R12.1, R12.2, R12.3). Thin
  * controller: validates input via form requests and delegates all logic to
  * {@see PriceService}. Runs on the tenant pipeline, so every action is confined
  * to the active tenant database. The order-line price RESOLUTION itself is
- * performed by {@see \App\Services\PriceResolutionService} during ordering.
+ * performed by {@see PriceResolutionService} during ordering.
  */
 class PriceController extends Controller
 {
@@ -61,11 +66,18 @@ class PriceController extends Controller
     /**
      * PATCH /api/discounts/{discount} — update percentage/scope/active (R12.5).
      */
-    public function updateDiscount(\Illuminate\Http\Request $request, \App\Models\Discount $discount): JsonResponse
+    public function updateDiscount(Request $request, Discount $discount): JsonResponse
     {
         $data = $request->validate([
             'customer_type' => ['sometimes', 'nullable', 'string', 'max:64'],
-            'percentage' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+            'value_type' => ['sometimes', 'string', Rule::in(Discount::VALUE_TYPES)],
+            'percentage' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'amount' => ['required_if:value_type,'.Discount::VALUE_FIXED, 'nullable', 'numeric', 'min:0', 'max:9999999999999'],
+            'buyer_type' => ['sometimes', 'nullable', 'string', Rule::in(['dealer', 'distributor'])],
+            'buyer_id' => ['nullable', 'integer', 'required_with:buyer_type',
+                Rule::when($request->input('buyer_type') === 'dealer', ['exists:tenant.dealers,id']),
+                Rule::when($request->input('buyer_type') === 'distributor', ['exists:tenant.distributors,id'])],
+            'product_id' => ['sometimes', 'nullable', 'integer', 'exists:tenant.products,id'],
             'category_id' => ['sometimes', 'nullable', 'integer', 'exists:tenant.categories,id'],
             'collection_id' => ['sometimes', 'nullable', 'integer', 'exists:tenant.collections,id'],
             'colour_id' => ['sometimes', 'nullable', 'integer', 'exists:tenant.colours,id'],
@@ -76,7 +88,7 @@ class PriceController extends Controller
     }
 
     /** DELETE /api/discounts/{discount} — remove a discount. */
-    public function destroyDiscount(\App\Models\Discount $discount): JsonResponse
+    public function destroyDiscount(Discount $discount): JsonResponse
     {
         $this->prices->deleteDiscount($discount);
 
@@ -84,7 +96,7 @@ class PriceController extends Controller
     }
 
     /** DELETE /api/prices/{price} — remove a price configuration. */
-    public function destroyPrice(\App\Models\Price $price): JsonResponse
+    public function destroyPrice(Price $price): JsonResponse
     {
         $this->prices->deletePrice($price);
 

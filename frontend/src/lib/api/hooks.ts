@@ -48,6 +48,14 @@ export const useUsage = () => useQuery({ queryKey: ["usage"], queryFn: () => usa
 export const useDistributors = (page = 1) =>
   useQuery({ queryKey: ["distributors", page], queryFn: () => distributorApi.list(page) });
 
+/** Up to 100 dealers of one distributor for pick lists. */
+export const useDealerOptions = (distributorId: number | null) =>
+  useQuery({
+    queryKey: ["dealers", distributorId, "options"],
+    queryFn: () => dealerApi.list(distributorId as number, 1, 100),
+    enabled: distributorId !== null,
+  });
+
 /** A single distributor (for the edit page). */
 export const useDistributor = (id: number | null) =>
   useQuery({

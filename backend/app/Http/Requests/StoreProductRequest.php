@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Services\ProductService;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -19,7 +20,7 @@ use Illuminate\Validation\Rule;
  * table, this uniqueness is per-tenant automatically.
  *
  * The product QUOTA (R5.1) is NOT checked here: it is enforced in
- * {@see \App\Services\ProductService::create()} which returns a 403 naming the
+ * {@see ProductService::create()} which returns a 403 naming the
  * `max_products` quota rather than a 422.
  */
 class StoreProductRequest extends FormRequest
@@ -42,6 +43,8 @@ class StoreProductRequest extends FormRequest
                 // Unique within the active tenant database (R11.1).
                 Rule::unique('tenant.products', 'sku'),
             ],
+            // GST HSN / SAC code: 4, 6 or 8 digits. Mandatory.
+            'hsn_code' => ['required', 'string', 'regex:/^(\d{4}|\d{6}|\d{8})$/'],
             'name' => ['required', 'string', 'max:255'],
             // Base selling amount maintained with the product (R11.3). Optional.
             'price' => ['sometimes', 'nullable', 'numeric', 'min:0'],

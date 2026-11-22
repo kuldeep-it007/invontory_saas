@@ -15,12 +15,32 @@ import {
   useCategories,
   useCollections,
   useColours,
+  useDealerOptions,
   useDiscountMutations,
   useDiscounts,
+  useDistributorOptions,
+  useProductOptions,
 } from "@/lib/api/hooks";
 import type { Discount } from "@/lib/api/types";
 
 /* ─── Discounts ─────────────────────────────────────────────────────────────── */
+
+/**
+ * Priority level of a discount, mirroring the server's resolution order
+ * (Dealer > Distributor > Product > General). Only the highest-priority
+ * applicable discount is applied to a price; discounts never stack.
+ */
+export function discountLevel(d: Pick<Discount, "buyer_type" | "product_id" | "category_id" | "collection_id" | "colour_id">): string {
+  if (d.buyer_type === "dealer") return "Dealer";
+  if (d.buyer_type === "distributor") return "Distributor";
+  if (d.product_id || d.category_id || d.collection_id || d.colour_id) return "Product";
+  return "General";
+}
+
+/** Human-readable discount value: "10%" or "50.00 off". */
+export function discountValue(d: Pick<Discount, "value_type" | "percentage" | "amount">): string {
+  return d.value_type === "fixed" ? `${Number(d.amount ?? 0).toFixed(2)} off` : `${Number(d.percentage)}%`;
+}
 
 export function DiscountsSection({ canManage }: { canManage: boolean }): JSX.Element {
   const { confirm, toast } = useAlerts();
@@ -56,13 +76,22 @@ export function DiscountsSection({ canManage }: { canManage: boolean }): JSX.Ele
   }
 
   const columns: Column<Discount>[] = [
-    { header: "Type", cell: (d) => <Badge>{d.type}</Badge> },
-    { header: "Customer type", cell: (d) => d.customer_type ?? "any" },
-    { header: "%", cell: (d) => `${Number(d.percentage)}%` },
+    { header: "Priority", cell: (d) => <Badge>{discountLevel(d)}</Badge> },
+    { header: "Type", cell: (d) => d.type },
+    { header: "Value", className: "tabular-nums", cell: (d) => discountValue(d) },
+    {
+      header: "Buyer",
+      cell: (d) => (d.buyer_type ? `${d.buyer_type} #${d.buyer_id}` : (d.customer_type ?? "any")),
+    },
     {
       header: "Scope",
       cell: (d) =>
-        [d.category_id && `cat #${d.category_id}`, d.collection_id && `coll #${d.collection_id}`, d.colour_id && `col #${d.colour_id}`]
+        [
+          d.product_id && `product #${d.product_id}`,
+          d.category_id && `cat #${d.category_id}`,
+          d.collection_id && `coll #${d.collection_id}`,
+          d.colour_id && `col #${d.colour_id}`,
+        ]
           .filter(Boolean)
           .join(", ") || "all",
     },
@@ -95,7 +124,12 @@ export function DiscountsSection({ canManage }: { canManage: boolean }): JSX.Ele
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-foreground">Discounts</h2>
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Discounts</h2>
+          <p className="text-xs text-muted-foreground">
+            Only one discount applies per price, by priority: Dealer, then Distributor, then Product, then General.
+          </p>
+        </div>
         {canManage ? (
           <Button variant="secondary" onClick={() => setAddOpen(true)}>
             Add discount
@@ -129,13 +163,28 @@ function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }
   const empty = {
     type: "customer",
     customer_type: "",
+    value_type: "percent",
     percentage: "",
+    amount: "",
+    buyer_type: "",
+    distributor_id: "",
+    dealer_id: "",
+    product_id: "",
     category_id: "",
     collection_id: "",
     colour_id: "",
   };
   const [form, setForm] = useState(empty);
   const [error, setError] = useState<string | null>(null);
+
+  const distributors = useDistributorOptions();
+  const dealers = useDealerOptions(form.buyer_type === "dealer" && form.distributor_id ? Number(form.distributor_id) : null);
+  const products = useProductOptions();
+
+  const isFixed = form.value_type === "fixed";
+  const buyerId = form.buyer_type === "dealer" ? form.dealer_id : form.buyer_type === "distributor" ? form.distributor_id : "";
+  const valueMissing = isFixed ? !form.amount : !form.percentage;
+  const buyerMissing = form.buyer_type !== "" && !buyerId;
 
   function reset() {
     setForm(empty);
@@ -149,7 +198,12 @@ function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }
       await create.mutateAsync({
         type: form.type,
         customer_type: form.customer_type || null,
-        percentage: Number(form.percentage),
+        value_type: form.value_type,
+        percentage: isFixed ? null : Number(form.percentage),
+        amount: isFixed ? Number(form.amount) : null,
+        buyer_type: form.buyer_type || null,
+        buyer_id: buyerId ? Number(buyerId) : null,
+        product_id: form.product_id ? Number(form.product_id) : null,
         category_id: form.category_id ? Number(form.category_id) : null,
         collection_id: form.collection_id ? Number(form.collection_id) : null,
         colour_id: form.colour_id ? Number(form.colour_id) : null,
@@ -164,6 +218,7 @@ function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }
   return (
     <Modal
       open={open}
+      size="lg"
       onClose={() => {
         reset();
         onClose();
@@ -174,7 +229,7 @@ function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }
           formId="create-discount-form"
           submitLabel="Add discount"
           busy={create.isPending}
-          disabled={!form.percentage}
+          disabled={valueMissing || buyerMissing}
           onCancel={() => {
             reset();
             onClose();
@@ -201,10 +256,75 @@ function DiscountModal({ open, onClose }: { open: boolean; onClose: () => void }
             { value: "dealer", label: "Dealer" },
           ]}
         />
-        <div className="space-y-1.5">
-          <Label htmlFor="pct">Percentage</Label>
-          <Input id="pct" type="number" value={form.percentage} onChange={(e) => setForm({ ...form, percentage: e.target.value })} />
-        </div>
+        <Select
+          label="Discount as"
+          value={form.value_type}
+          onChange={(v) => setForm({ ...form, value_type: v || "percent", percentage: "", amount: "" })}
+          options={[
+            { value: "percent", label: "Percentage (%)" },
+            { value: "fixed", label: "Fixed amount off per unit" },
+          ]}
+        />
+        {isFixed ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="discount-amount">Amount *</Label>
+            <Input
+              id="discount-amount"
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.amount}
+              onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <Label htmlFor="discount-pct">Percentage *</Label>
+            <Input
+              id="discount-pct"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={form.percentage}
+              onChange={(e) => setForm({ ...form, percentage: e.target.value })}
+            />
+          </div>
+        )}
+
+        {/* Buyer scope decides the priority level (Dealer > Distributor). */}
+        <Select
+          label="Applies to buyer (optional)"
+          value={form.buyer_type}
+          onChange={(v) => setForm({ ...form, buyer_type: v, distributor_id: "", dealer_id: "" })}
+          options={[
+            { value: "distributor", label: "A specific distributor" },
+            { value: "dealer", label: "A specific dealer" },
+          ]}
+        />
+        {form.buyer_type !== "" ? (
+          <Select
+            label="Distributor"
+            value={form.distributor_id}
+            onChange={(v) => setForm({ ...form, distributor_id: v, dealer_id: "" })}
+            options={(distributors.data?.data ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
+          />
+        ) : null}
+        {form.buyer_type === "dealer" ? (
+          <Select
+            label="Dealer"
+            value={form.dealer_id}
+            onChange={(v) => setForm({ ...form, dealer_id: v })}
+            options={(dealers.data?.data ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
+          />
+        ) : null}
+
+        <Select
+          label="Product (optional)"
+          value={form.product_id}
+          onChange={(v) => setForm({ ...form, product_id: v })}
+          options={(products.data?.data ?? []).map((p) => ({ value: String(p.id), label: `${p.sku} — ${p.name}` }))}
+        />
         <Select
           label="Category scope"
           value={form.category_id}

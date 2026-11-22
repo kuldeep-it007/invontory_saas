@@ -168,12 +168,31 @@ export interface Product {
   name: string;
   /** Base selling amount maintained with the product (R11.3); null if unset. */
   price: string | number | null;
+  /** HSN code (4, 6 or 8 digits); null only on legacy products. */
+  hsn_code: string | null;
   tax_type: string | null;
   uom: string | null;
   category_id: number | null;
   collection_id: number | null;
   colour_id: number | null;
   created_at: string | null;
+  /** Server-resolved price for a general buyer (single best discount applied). */
+  pricing?: ProductPricing | null;
+}
+
+export interface ProductPricing {
+  /** Base price after markup, as a decimal string. */
+  base_price: string;
+  /** Price after the single applicable discount, as a decimal string. */
+  final_price: string;
+  currency: string;
+  discount: {
+    id: number | null;
+    level: "dealer" | "distributor" | "product" | "general";
+    type: "percent" | "fixed";
+    value: number | null;
+    amount: number;
+  } | null;
 }
 
 export interface CatalogAttribute {
@@ -218,9 +237,13 @@ export interface Discount {
   id: number;
   type: "customer" | "online";
   customer_type: string | null;
+  /** `percent` uses `percentage`; `fixed` uses `amount` (currency off per unit). */
+  value_type: "percent" | "fixed";
   percentage: string | number;
+  amount: string | number | null;
   buyer_type: string | null;
   buyer_id: number | null;
+  product_id: number | null;
   category_id: number | null;
   collection_id: number | null;
   colour_id: number | null;

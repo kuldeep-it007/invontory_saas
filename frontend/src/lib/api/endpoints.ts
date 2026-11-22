@@ -197,7 +197,7 @@ export const priceApi = {
 };
 
 export const productApi = {
-  list: (page = 1, perPage = 15) =>
+  list: (page = 1, perPage = 25) =>
     api.get<Paginated<Product>>("/products", { page, per_page: perPage }),
   create: (payload: Record<string, unknown>) => api.post<Resource<Product>>("/products", payload),
   update: (id: number, payload: Record<string, unknown>) =>

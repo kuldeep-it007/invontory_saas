@@ -29,6 +29,7 @@ class Product extends Model implements Auditable
      */
     protected $fillable = [
         'sku',
+        'hsn_code',
         'name',
         'price',
         'collection_id',

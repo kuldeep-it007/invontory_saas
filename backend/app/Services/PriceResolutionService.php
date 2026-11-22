@@ -4,198 +4,238 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\Dealer;
 use App\Models\Discount;
+use App\Models\Distributor;
 use App\Models\Price;
 use App\Models\Product;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Support\Collection;
 use InvalidArgumentException;
 
 /**
  * Order-line price resolution (R12.1–R12.5, R39.1).
  *
- * Focused single-responsibility service that computes the price of an order
- * line for a Buyer. The resolution is a pure, deterministic pipeline:
+ *   1. BASE price: the product-level Price row; else the product's own `price`
+ *      (maintained on the product form); else the collection-level Price row.
+ *   2. MARKUP/MUP from the Price row, if any (R12.2).
+ *   3. ONE discount: of all active discounts that apply, only the one with the
+ *      highest priority is used (Dealer > Distributor > Product > General).
+ *      Discounts are never combined. A discount is a percentage or a fixed
+ *      amount. Ties at the same level go to the more specific catalog scope
+ *      (product > colour > collection > category), then the larger saving.
+ *   4. CLAMP so the price is NEVER negative (R12.4).
  *
- *   1. RESOLVE the applicable base price. A Product-level price OVERRIDES a
- *      Collection-level price for that product; the collection price is the
- *      fallback when no product-level price exists (R12.1, R12.4).
- *   2. APPLY the collection markup/MUP (if any) to the base (R12.2).
- *   3. APPLY all applicable discounts (`customer` + `online`) CUMULATIVELY —
- *      each successive percentage reduces the running amount (R12.5).
- *   4. CLAMP the result so it is NEVER negative (R12.4).
- *
- * Every monetary value is expressed in the Tenant's single configured currency
- * (R39.1), read from the active tenancy context. The arithmetic core
- * ({@see computePrice()}) is pure so it can be exercised directly by property
- * tests, while {@see resolveForProduct()} performs the tenant-database lookups.
+ * Amounts are in the tenant's single currency (R39.1). {@see computePrice()}
+ * is pure; {@see resolveForProduct()} / {@see resolveMany()} do the lookups.
  */
 class PriceResolutionService
 {
+    /** Buyer-type spellings accepted on discounts (short form and class name). */
+    private const DEALER_TYPES = ['dealer', Dealer::class];
+
+    private const DISTRIBUTOR_TYPES = ['distributor', Distributor::class];
+
     /**
-     * Resolve the price for a Product and Buyer from the active tenant database
-     * (R12.1–R12.5). Reads the applicable Price (product-level overriding
-     * collection-level) and the set of active, applicable discounts, then
-     * delegates to the pure {@see computePrice()}.
+     * Resolve the price of one product for a Buyer.
      *
-     * @param  Product     $product   the ordered product.
-     * @param  string|null $buyerType the Buyer's morph type (Distributor/Dealer), or null.
-     * @param  int|null    $buyerId   the Buyer's id, or null.
+     * @param  string|null  $buyerType  `distributor` / `dealer` (or the model class), or null.
+     *
+     * @throws InvalidArgumentException when no base price is configured.
      */
     public function resolveForProduct(Product $product, ?string $buyerType = null, ?int $buyerId = null): ResolvedPrice
     {
-        $price = $this->resolveApplicablePrice($product);
+        $resolved = $this->resolveMany(collect([$product]), $buyerType, $buyerId, strict: true);
 
-        if ($price === null) {
-            throw new InvalidArgumentException(sprintf(
-                'No applicable price configured for product %d (neither product- nor collection-level).',
-                (int) $product->getKey(),
-            ));
-        }
-
-        $discounts = $this->applicableDiscounts($product, $buyerType, $buyerId);
-
-        return $this->computePrice(
-            (float) $price->amount,
-            $price->markup_type,
-            $price->markup_value === null ? null : (float) $price->markup_value,
-            $discounts,
-        );
+        return $resolved[(int) $product->getKey()];
     }
 
     /**
-     * Pure price computation (R12.2, R12.4, R12.5, R39.1).
+     * Resolve many products for one Buyer with a fixed number of queries
+     * (used for product listings). Products without any base price are
+     * skipped unless $strict.
      *
-     * Applies the markup/MUP to the base, then every discount percentage
-     * cumulatively, and clamps the final amount at zero so it is never
-     * negative. The returned {@see ResolvedPrice} is tagged with the tenant's
-     * single currency.
+     * @param  Collection<int, Product>  $products
+     * @return array<int, ResolvedPrice> keyed by product id
      *
-     * @param  float                       $baseAmount     the resolved applicable base price (>= 0).
-     * @param  string|null                 $markupType     `markup`, `mup`, or null for no markup (R12.2).
-     * @param  float|null                  $markupValue    markup/MUP percentage, or null.
-     * @param  array<int, float>           $discountPercents applicable discount percentages, applied cumulatively (R12.5).
+     * @throws InvalidArgumentException when $strict and a product has no base price.
+     */
+    public function resolveMany(Collection $products, ?string $buyerType = null, ?int $buyerId = null, bool $strict = false): array
+    {
+        if ($products->isEmpty()) {
+            return [];
+        }
+
+        $products = EloquentCollection::make($products->all())->loadMissing('collection');
+        $productPrices = Price::query()->where('level', Price::LEVEL_PRODUCT)
+            ->whereIn('ref_id', $products->modelKeys())->get()->keyBy('ref_id');
+        $collectionPrices = Price::query()->where('level', Price::LEVEL_COLLECTION)
+            ->whereIn('ref_id', $products->pluck('collection_id')->unique()->all())->get()->keyBy('ref_id');
+        [$dealerId, $distributorId] = $this->buyerChain($buyerType, $buyerId);
+        $candidates = $this->candidateDiscounts($dealerId, $distributorId);
+
+        $out = [];
+        foreach ($products as $product) {
+            $price = $productPrices->get($product->getKey());
+            $base = $price?->amount;
+            if ($base === null && $product->price !== null) {
+                $base = $product->price;
+            }
+            if ($base === null) {
+                $price = $collectionPrices->get($product->collection_id);
+                $base = $price?->amount;
+            }
+            if ($base === null) {
+                if ($strict) {
+                    throw new InvalidArgumentException(sprintf(
+                        'No applicable price configured for product %d (no product price, product-level or collection-level price).',
+                        (int) $product->getKey(),
+                    ));
+                }
+
+                continue;
+            }
+
+            $markupType = $price?->markup_type;
+            $markupValue = $price?->markup_value === null ? null : (float) $price->markup_value;
+            $markedUp = $this->markUp(max(0.0, (float) $base), $markupType, $markupValue);
+            $best = $this->bestDiscount($candidates, $product, $dealerId, $distributorId, $markedUp);
+
+            $out[(int) $product->getKey()] = $this->computePrice((float) $base, $markupType, $markupValue, $best['discount'] ?? null, $best['level'] ?? null);
+        }
+
+        return $out;
+    }
+
+    /**
+     * Pure price computation (R12.2, R12.4, R12.5, R39.1): markup, then at most
+     * ONE discount, clamped at zero.
+     *
+     * @param  float  $baseAmount  the resolved base price (>= 0).
+     * @param  string|null  $markupType  `markup`, `mup`, or null (R12.2).
+     * @param  float|null  $markupValue  markup/MUP percentage, or null.
+     * @param  Discount|null  $discount  the single discount to apply, if any.
+     * @param  string|null  $level  the priority level the discount was chosen at.
      */
     public function computePrice(
         float $baseAmount,
         ?string $markupType = null,
         ?float $markupValue = null,
-        array $discountPercents = [],
+        ?Discount $discount = null,
+        ?string $level = null,
     ): ResolvedPrice {
         $base = max(0.0, $baseAmount);
+        $markedUp = $this->markUp($base, $markupType, $markupValue);
+        $saving = $discount?->savingOn($markedUp) ?? 0.0;
+        $final = max(0.0, $markedUp - $saving);
 
-        // Step 2 — markup/MUP (R12.2). Both markup and MUP raise the base by
-        // the configured percentage; a null type or value means no markup.
-        $markedUp = $base;
-
-        if ($markupType !== null && $markupValue !== null) {
-            if (! Price::isValidMarkupType($markupType)) {
-                throw new InvalidArgumentException(sprintf('Invalid markup type "%s".', $markupType));
-            }
-
-            $markedUp = $base * (1.0 + ($markupValue / 100.0));
-        }
-
-        // Step 3 — cumulative discounts (R12.5). Each discount reduces the
-        // running amount by its percentage, compounding on the already-
-        // discounted amount so order does not change the result.
-        $final = $markedUp;
-
-        foreach ($discountPercents as $percent) {
-            $final *= (1.0 - ($this->normalizeDiscountPercent((float) $percent) / 100.0));
-        }
-
-        // Step 4 — never negative (R12.4). Cumulative discounts can only reduce
-        // toward zero, but clamp defensively so the contract always holds.
-        $final = max(0.0, $final);
-
-        return new ResolvedPrice($base, max(0.0, $markedUp), $final, $this->tenantCurrency());
-    }
-
-    /**
-     * The applicable base Price for a product: the Product-level price when one
-     * exists, otherwise the Collection-level price (R12.1, R12.4). Returns null
-     * when neither is configured.
-     */
-    private function resolveApplicablePrice(Product $product): ?Price
-    {
-        $productPrice = Price::query()
-            ->where('level', Price::LEVEL_PRODUCT)
-            ->where('ref_id', $product->getKey())
-            ->first();
-
-        if ($productPrice !== null) {
-            return $productPrice;
-        }
-
-        return Price::query()
-            ->where('level', Price::LEVEL_COLLECTION)
-            ->where('ref_id', $product->collection_id)
-            ->first();
-    }
-
-    /**
-     * The percentages of every active discount applicable to this Product +
-     * Buyer, resolved Rosetta-style (R12.5).
-     *
-     * A discount applies when BOTH hold:
-     *   - Buyer scope: the discount has no buyer, OR it targets this Buyer.
-     *   - Catalog scope: for each of category/collection/colour the discount
-     *     pins, the Product must match that level (a NULL level = "any").
-     *
-     * Rosetta picks the single most-specific discount per customer_type family;
-     * we keep our cumulative model (R12.5) but PREFER specificity by applying
-     * at most one discount per `type` (customer / online) — the most specific
-     * applicable one. That yields the Rosetta "most-specific wins" behaviour
-     * for a given type while still combining the two independent types
-     * cumulatively.
-     *
-     * @return array<int, float>
-     */
-    private function applicableDiscounts(Product $product, ?string $buyerType, ?int $buyerId): array
-    {
-        $categoryId = $product->collection?->category_id;
-        $collectionId = $product->collection_id;
-        $colourId = $product->colour_id;
-
-        $candidates = Discount::query()
-            ->where('is_active', true)
-            // Buyer scope: unscoped OR this buyer.
-            ->where(function ($q) use ($buyerType, $buyerId): void {
-                $q->whereNull('buyer_id');
-                if ($buyerType !== null && $buyerId !== null) {
-                    $q->orWhere(function ($inner) use ($buyerType, $buyerId): void {
-                        $inner->where('buyer_type', $buyerType)->where('buyer_id', $buyerId);
-                    });
-                }
-            })
-            // Catalog scope: each pinned level must match the product (NULL = any).
-            ->where(fn ($q) => $q->whereNull('category_id')->orWhere('category_id', $categoryId))
-            ->where(fn ($q) => $q->whereNull('collection_id')->orWhere('collection_id', $collectionId))
-            ->where(fn ($q) => $q->whereNull('colour_id')->orWhere('colour_id', $colourId))
-            ->get();
-
-        // Keep only the most-specific applicable discount per type family.
-        $bestByType = [];
-        foreach ($candidates as $discount) {
-            $type = $discount->type;
-            if (! isset($bestByType[$type]) || $discount->specificity() > $bestByType[$type]->specificity()) {
-                $bestByType[$type] = $discount;
-            }
-        }
-
-        return array_map(
-            static fn (Discount $d): float => (float) $d->percentage,
-            array_values($bestByType),
+        return new ResolvedPrice(
+            $base,
+            $markedUp,
+            $final,
+            $this->tenantCurrency(),
+            discountAmount: $saving,
+            discountId: $discount?->getKey() === null ? null : (int) $discount->getKey(),
+            discountLevel: $discount === null ? null : ($level ?? Discount::LEVEL_GENERAL),
+            discountType: $discount?->value_type ?? ($discount === null ? null : Discount::VALUE_PERCENT),
+            discountValue: $discount === null ? null : (float) ($discount->isFixed() ? $discount->amount : $discount->percentage),
         );
     }
 
-    /**
-     * Clamp a discount percentage into [0, 100] so a single discount can never
-     * push the price negative or increase it; the never-negative contract
-     * (R12.4) is additionally guaranteed by the final clamp.
-     */
-    private function normalizeDiscountPercent(float $percent): float
+    private function markUp(float $base, ?string $markupType, ?float $markupValue): float
     {
-        return max(0.0, min(100.0, $percent));
+        if ($markupType === null || $markupValue === null) {
+            return $base;
+        }
+        if (! Price::isValidMarkupType($markupType)) {
+            throw new InvalidArgumentException(sprintf('Invalid markup type "%s".', $markupType));
+        }
+
+        return max(0.0, $base * (1.0 + ($markupValue / 100.0)));
+    }
+
+    /**
+     * [dealer id, distributor id] for the buyer: a dealer's distributor is its
+     * serving distributor; a distributor buyer has no dealer.
+     *
+     * @return array{0: int|null, 1: int|null}
+     */
+    private function buyerChain(?string $buyerType, ?int $buyerId): array
+    {
+        if ($buyerId === null || $buyerType === null) {
+            return [null, null];
+        }
+        if (in_array($buyerType, self::DEALER_TYPES, true)) {
+            $distributorId = Dealer::query()->whereKey($buyerId)->value('distributor_id');
+
+            return [$buyerId, $distributorId === null ? null : (int) $distributorId];
+        }
+        if (in_array($buyerType, self::DISTRIBUTOR_TYPES, true)) {
+            return [null, $buyerId];
+        }
+
+        return [null, null];
+    }
+
+    /**
+     * Active discounts whose buyer scope fits: unscoped, this dealer, or this
+     * (or the dealer's) distributor.
+     *
+     * @return Collection<int, Discount>
+     */
+    private function candidateDiscounts(?int $dealerId, ?int $distributorId): Collection
+    {
+        return Discount::query()
+            ->where('is_active', true)
+            ->where(function ($q) use ($dealerId, $distributorId): void {
+                $q->whereNull('buyer_id');
+                if ($dealerId !== null) {
+                    $q->orWhere(fn ($i) => $i->whereIn('buyer_type', self::DEALER_TYPES)->where('buyer_id', $dealerId));
+                }
+                if ($distributorId !== null) {
+                    $q->orWhere(fn ($i) => $i->whereIn('buyer_type', self::DISTRIBUTOR_TYPES)->where('buyer_id', $distributorId));
+                }
+            })
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * The single highest-priority discount for this product, or null.
+     *
+     * @param  Collection<int, Discount>  $candidates
+     * @return array{discount: Discount, level: string}|null
+     */
+    private function bestDiscount(Collection $candidates, Product $product, ?int $dealerId, ?int $distributorId, float $markedUp): ?array
+    {
+        $categoryId = $product->collection?->category_id;
+        $best = null;
+        $bestKey = null;
+
+        foreach ($candidates as $discount) {
+            if (($discount->product_id !== null && $discount->product_id !== (int) $product->getKey())
+                || ($discount->colour_id !== null && $discount->colour_id !== (int) $product->colour_id)
+                || ($discount->collection_id !== null && $discount->collection_id !== (int) $product->collection_id)
+                || ($discount->category_id !== null && $discount->category_id !== (int) $categoryId)) {
+                continue;
+            }
+
+            $level = match (true) {
+                $discount->buyer_id !== null && in_array($discount->buyer_type, self::DEALER_TYPES, true) && (int) $discount->buyer_id === $dealerId => Discount::LEVEL_DEALER,
+                $discount->buyer_id !== null && in_array($discount->buyer_type, self::DISTRIBUTOR_TYPES, true) && (int) $discount->buyer_id === $distributorId => Discount::LEVEL_DISTRIBUTOR,
+                $discount->hasCatalogScope() => Discount::LEVEL_PRODUCT,
+                default => Discount::LEVEL_GENERAL,
+            };
+
+            // Compare (level, catalog specificity, saving, newest) - higher wins.
+            $key = [Discount::LEVEL_RANK[$level], $discount->catalogSpecificity(), round($discount->savingOn($markedUp), 4), (int) $discount->getKey()];
+            if ($bestKey === null || $key > $bestKey) {
+                $best = ['discount' => $discount, 'level' => $level];
+                $bestKey = $key;
+            }
+        }
+
+        return $best;
     }
 
     /**
