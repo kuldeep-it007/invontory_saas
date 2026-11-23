@@ -232,6 +232,8 @@ it('exposes only display branding publicly, falling back to the company name (R3
                 'logo' => null,
                 'favicon' => null,
                 'color_theme' => null,
+                // No primary custom domain is configured, so no redirect host.
+                'canonical_host' => null,
             ]);
 
             $service->update([
@@ -247,7 +249,7 @@ it('exposes only display branding publicly, falling back to the company name (R3
             expect($branding['logo'])->toBe('https://cdn.example.test/logo.png')
                 ->and($branding['favicon'])->toBe('https://cdn.example.test/favicon.ico')
                 ->and($branding['brand_name'])->toBe('Acme Textiles')
-                ->and(array_keys($branding))->toBe(['brand_name', 'logo', 'favicon', 'color_theme']);
+                ->and(array_keys($branding))->toBe(['brand_name', 'logo', 'favicon', 'color_theme', 'canonical_host']);
 
             // An explicit brand name wins over the company name.
             $service->update(['brand_name' => 'Acme Online']);
