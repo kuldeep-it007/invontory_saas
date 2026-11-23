@@ -8,8 +8,11 @@ use App\Models\Company;
 use App\Models\Dealer;
 use App\Models\Distributor;
 use App\Models\Order;
+use App\Models\OrderLine;
+use App\Support\CatalogOwner;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\Relation;
 
 /**
  * Order history listing, scoped to the viewer (R20, R21, R33).
@@ -98,11 +101,32 @@ class OrderListService
     {
         // `lines.product` carries the ordered product's name/SKU so listings can
         // show WHAT was ordered without an N+1 (the full detail is on show()).
+        $companyLinesOnly = ! empty($filters['company_lines_only']);
+
         return Order::query()
-            ->with(['buyer', 'seller', 'lines.product:id,sku,name'])
+            ->with(['buyer', 'seller', 'lines' => function ($lines) use ($companyLinesOnly): void {
+                $lines->with('product:id,sku,name');
+                if ($companyLinesOnly) {
+                    self::companyProductLines($lines);
+                }
+            }])
+            // The Company sees only orders with its own products, and only
+            // those lines (other owners' lines stay hidden).
+            ->when($companyLinesOnly, fn (Builder $q) => $q->whereHas('lines', fn ($l) => self::companyProductLines($l))
+                ->withCount('lines as all_lines_count'))
             ->when(! empty($filters['status']), fn (Builder $q) => $q->whereIn('status', (array) $filters['status']))
             ->when(! empty($filters['order_type']), fn (Builder $q) => $q->where('order_type', $filters['order_type']))
             ->latest('id');
+    }
+
+    /**
+     * Restrict an order-lines query to lines of Company-owned products.
+     *
+     * @param  Builder<OrderLine>|Relation<OrderLine, Order, mixed>  $lines
+     */
+    public static function companyProductLines($lines): void
+    {
+        $lines->whereHas('product', fn ($p) => $p->withoutGlobalScopes()->where('owner_key', CatalogOwner::COMPANY));
     }
 
     /**

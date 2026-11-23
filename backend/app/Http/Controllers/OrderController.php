@@ -12,11 +12,15 @@ use App\Models\Distributor;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\CartSubmissionService;
+use App\Services\ChainOrderService;
 use App\Services\OrderListService;
+use App\Support\CatalogOwner;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Order placement HTTP surface (R20).
@@ -32,6 +36,7 @@ class OrderController extends Controller
     public function __construct(
         private readonly CartSubmissionService $cart,
         private readonly OrderListService $orders,
+        private readonly ChainOrderService $chains,
     ) {}
 
     /**
@@ -53,6 +58,8 @@ class OrderController extends Controller
         $filters = [
             'status' => array_values(array_filter(array_map('trim', explode(',', (string) ($data['status'] ?? ''))))),
             'order_type' => $data['order_type'] ?? null,
+            // The Company sees only its own products' lines (line-level visibility).
+            'company_lines_only' => CatalogOwner::isCompanyUser($request->user()),
         ];
         $partyType = $data['party_type'] ?? null;
         $partyId = isset($data['party_id']) ? (int) $data['party_id'] : null;
@@ -63,9 +70,18 @@ class OrderController extends Controller
         // users (no party link) keep the full oversight behaviour below.
         $this->confinePanelUserToOwnParty($request->user(), $partyType, $partyId);
 
+        return response()->json($this->withVisibleTotals($this->list($partyType, $partyId, $scope, $perPage, $filters)));
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return LengthAwarePaginator<int, Order>
+     */
+    private function list(?string $partyType, ?int $partyId, ?string $scope, int $perPage, array $filters): LengthAwarePaginator
+    {
         // No party context → the Company's full tenant history.
         if ($partyType === null && $scope === null) {
-            return response()->json($this->orders->all($perPage, $filters));
+            return $this->orders->all($perPage, $filters);
         }
 
         if ($scope === 'seller') {
@@ -74,24 +90,52 @@ class OrderController extends Controller
             if ($partyType === null || $partyType === 'company') {
                 $companyId = $partyId ?? (int) Company::query()->value('id');
 
-                return response()->json($this->orders->soldBy('company', $companyId, $perPage, $filters));
+                return $this->orders->soldBy('company', $companyId, $perPage, $filters);
             }
 
-            return response()->json($this->orders->soldBy($partyType, (int) $partyId, $perPage, $filters));
+            return $this->orders->soldBy($partyType, (int) $partyId, $perPage, $filters);
         }
 
         // "Orders placed by" (buyer). With a specific party → that party's
         // orders; with only a party_type → every order placed by that tier
         // (e.g. all distributor orders for the Company's oversight).
         if ($partyType !== null && $partyId !== null) {
-            return response()->json($this->orders->placedBy($partyType, $partyId, $perPage, $filters));
+            return $this->orders->placedBy($partyType, $partyId, $perPage, $filters);
         }
 
         if ($partyType !== null) {
-            return response()->json($this->orders->placedByType($partyType, $perPage, $filters));
+            return $this->orders->placedByType($partyType, $perPage, $filters);
         }
 
-        return response()->json($this->orders->all($perPage, $filters));
+        return $this->orders->all($perPage, $filters);
+    }
+
+    /**
+     * When some lines are hidden from the viewer (the Company sees only its
+     * own products), the total is recomputed from the visible lines and the
+     * order carries `lines_hidden`.
+     *
+     * @param  LengthAwarePaginator<int, Order>  $page
+     * @return LengthAwarePaginator<int, Order>
+     */
+    private function withVisibleTotals(LengthAwarePaginator $page): LengthAwarePaginator
+    {
+        $page->getCollection()->each(function (Order $order): void {
+            if ($order->all_lines_count === null) {
+                return;
+            }
+            $hidden = (int) $order->all_lines_count - $order->lines->count();
+            unset($order->all_lines_count);
+            if ($hidden > 0) {
+                $order->setAttribute('lines_hidden', $hidden);
+                $order->setAttribute('total', number_format(
+                    (float) $order->lines->sum(fn ($line) => (float) $line->unit_price * (float) $line->quantity),
+                    2, '.', '',
+                ));
+            }
+        });
+
+        return $page;
     }
 
     /**
@@ -112,13 +156,36 @@ class OrderController extends Controller
 
         // Full product detail per line (category › collection › colour) and the
         // stock points each line is sourced from, for the order view.
+        $companyOnly = CatalogOwner::isCompanyUser($request->user());
+        $allLines = $order->lines()->count();
+
         $order->load([
             'buyer',
             'seller',
-            'lines.product.collection.category',
-            'lines.product.colour',
-            'lines.allocations.stockPoint',
+            'lines' => function ($lines) use ($companyOnly): void {
+                $lines->with(['product.collection.category', 'product.colour', 'allocations.stockPoint']);
+                if ($companyOnly) {
+                    OrderListService::companyProductLines($lines);
+                }
+            },
         ]);
+
+        // The Company sees only its own products' lines; an order with none
+        // of them does not exist for it.
+        if ($companyOnly && $order->lines->isEmpty()) {
+            throw new NotFoundHttpException('Not found.');
+        }
+        $hidden = $allLines - $order->lines->count();
+        if ($hidden > 0) {
+            $order->setAttribute('lines_hidden', $hidden);
+            $order->setAttribute('total', number_format(
+                (float) $order->lines->sum(fn ($line) => (float) $line->unit_price * (float) $line->quantity),
+                2, '.', '',
+            ));
+        }
+
+        // The other orders of its chain (SO-/PO- legs) the viewer is a party to.
+        $order->setAttribute('chain_orders', $this->chains->relatedFor($order, $own));
 
         return response()->json(['data' => $order]);
     }

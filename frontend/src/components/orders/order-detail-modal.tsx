@@ -4,7 +4,7 @@ import { Modal } from "@/components/ui/modal";
 import { Badge, StateMessage } from "@/components/ui/primitives";
 import { errorMessage } from "@/lib/api/errors";
 import { useOrder } from "@/lib/api/hooks";
-import type { OrderLineRow } from "@/lib/api/types";
+import type { ChainOrderLink, OrderLineRow } from "@/lib/api/types";
 
 /**
  * Order view: the order summary plus every ordered product with its details
@@ -66,6 +66,14 @@ export function OrderDetailModal({
                 ) : null}
               </tbody>
               <tfoot>
+                {order.lines_hidden ? (
+                  <tr className="border-t border-border/70">
+                    <td colSpan={5} className="px-3 py-2 text-xs text-muted-foreground">
+                      {order.lines_hidden} line(s) for other owners&apos; products are not shown. The total covers your
+                      lines only.
+                    </td>
+                  </tr>
+                ) : null}
                 <tr className="border-t border-border">
                   <td colSpan={4} className="px-3 py-2 text-right font-semibold">
                     Total
@@ -77,9 +85,40 @@ export function OrderDetailModal({
               </tfoot>
             </table>
           </div>
+
+          {order.chain_ref ? <ChainPanel chainRef={order.chain_ref} links={order.chain_orders ?? []} /> : null}
         </div>
       ) : null}
     </Modal>
+  );
+}
+
+/**
+ * The linked orders of a chain: the dealer's sales order (SO) and the
+ * distributor's upstream purchase orders (PO) under one reference.
+ */
+function ChainPanel({ chainRef, links }: { chainRef: string; links: ChainOrderLink[] }): JSX.Element {
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <p className="text-xs text-muted-foreground">
+        Chain reference <span className="font-mono text-foreground">{chainRef}</span>
+      </p>
+      {links.length === 0 ? null : (
+        <ul className="mt-2 space-y-1 text-sm">
+          {links.map((link) => (
+            <li key={link.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                <span className="font-mono">{link.order_number ?? `#${link.id}`}</span>{" "}
+                <span className="text-muted-foreground">
+                  {link.role === "purchase" ? "Upstream purchase" : "Dealer sales order"}: {link.buyer} → {link.seller}
+                </span>
+              </span>
+              <Badge>{link.status}</Badge>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

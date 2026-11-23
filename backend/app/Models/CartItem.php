@@ -43,6 +43,8 @@ class CartItem extends Model implements Auditable
         'product_id',
         'seller_type',
         'seller_id',
+        'source_type',
+        'source_id',
         'quantity',
         'allocations',
         'rrp',
@@ -58,6 +60,7 @@ class CartItem extends Model implements Auditable
         'cart_id' => 'integer',
         'product_id' => 'integer',
         'seller_id' => 'integer',
+        'source_id' => 'integer',
         'quantity' => 'decimal:3',
         'allocations' => 'array',
         'rrp' => 'decimal:2',
@@ -96,6 +99,16 @@ class CartItem extends Model implements Auditable
      * @return MorphTo<Model, $this>
      */
     public function seller(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    /**
+     * The upstream holder a dealer picked for this line (chain source), if any.
+     *
+     * @return MorphTo<Model, $this>
+     */
+    public function source(): MorphTo
     {
         return $this->morphTo();
     }

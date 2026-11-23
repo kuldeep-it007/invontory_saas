@@ -316,8 +316,16 @@ export interface OrderLineRow {
 
 export interface Order {
   id: number;
-  /** Unique, ≥8-digit human-facing order number (R20). */
+  /** Unique human-facing order number: SO-… (dealer order), PO-… (distributor order). */
   order_number?: string | null;
+  /** Shared reference of the orders in one chain (Order 1 + its upstream orders). */
+  chain_ref?: string | null;
+  /** The Order 1 this upstream order supplies. */
+  parent_order_id?: number | null;
+  /** Other orders of the chain the viewer is a party to (detail view only). */
+  chain_orders?: ChainOrderLink[];
+  /** Lines hidden from this viewer (the Company sees only its own products). */
+  lines_hidden?: number;
   status: string;
   order_type: string | null;
   total: string | number;
@@ -330,6 +338,16 @@ export interface Order {
   buyer?: OrderParty | null;
   seller?: OrderParty | null;
   lines?: OrderLineRow[];
+}
+
+/** Another order of the same chain. `purchase` = an upstream (PO) leg. */
+export interface ChainOrderLink {
+  id: number;
+  order_number: string | null;
+  status: string;
+  buyer: string;
+  seller: string;
+  role: "sales" | "purchase";
 }
 
 /* ─── Shopping cart (R20.3) ───────────────────────────────────────────────── */
@@ -348,6 +366,8 @@ export interface CartItem {
   } | null;
   /** Who sells this line; null on lines saved before sellers were recorded. */
   seller: CartSeller | null;
+  /** The holder the distributor buys this line from (chain order), if picked. */
+  source?: CartSeller | null;
   quantity: string;
   allocations: StockAllocation[] | null;
   rrp: string;

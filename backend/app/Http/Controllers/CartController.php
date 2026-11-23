@@ -157,6 +157,12 @@ class CartController extends Controller
                         'id' => (int) $item->seller->getKey(),
                         'name' => (string) ($item->seller->getAttribute('name') ?? ''),
                     ],
+                    // The holder the distributor buys this line from (chain order).
+                    'source' => $item->source === null ? null : [
+                        'type' => $this->sellerStock->shortType($item->source),
+                        'id' => (int) $item->source->getKey(),
+                        'name' => (string) ($item->source->getAttribute('name') ?? ''),
+                    ],
                     'quantity' => $item->quantity,
                     'allocations' => $item->allocations ?? null,
                     'rrp' => $item->rrp,

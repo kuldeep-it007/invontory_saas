@@ -21,8 +21,10 @@ use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
  *
  *   • a Distributor may buy from the Company or from ANY OTHER distributor
  *     (distributor-to-distributor ordering), never from itself;
- *   • a Dealer buys from its serving Distributor only (ordering from other
- *     holders through its distributor arrives with chain orders).
+ *   • a Dealer always buys from its serving Distributor. When it picks another
+ *     holder's stock (the Company or another distributor), that holder is the
+ *     line's SOURCE: the distributor buys it upstream in a linked chain order
+ *     ({@see ChainOrderService}).
  *
  * Without a chosen point the default seller is used: for a Distributor buyer
  * the product's owner (the Company for Company products); for a Dealer its
@@ -93,8 +95,23 @@ class SellerStockService
      */
     public function sellerFor(Model $buyer, int $productId, array $stockPointIds = []): Model
     {
+        return $this->resolveLine($buyer, $productId, $stockPointIds)[0];
+    }
+
+    /**
+     * [seller, source] of a cart line. The source is set only for a dealer
+     * that picked another holder's stock: the dealer still buys from its
+     * distributor, which buys the line from the source in a chain order.
+     *
+     * @param  list<int>  $stockPointIds
+     * @return array{0: Model, 1: Model|null}
+     *
+     * @throws UnprocessableEntityHttpException when the points span holders or the buyer may not buy from the holder.
+     */
+    public function resolveLine(Model $buyer, int $productId, array $stockPointIds = []): array
+    {
         if ($stockPointIds === []) {
-            return $this->defaultSeller($buyer, $productId);
+            return [$this->defaultSeller($buyer, $productId), null];
         }
 
         $owners = StockPoint::query()->whereKey($stockPointIds)->get(['id', 'owner_type', 'owner_id'])
@@ -110,11 +127,36 @@ class SellerStockService
             : null;
         if (! $holder instanceof Model || ! $this->canBuyFrom($buyer, $holder)) {
             throw new UnprocessableEntityHttpException($buyer instanceof Dealer
-                ? 'Dealers order from their own distributor\'s stock.'
+                ? 'This stock cannot be ordered.'
                 : 'You cannot order from your own stock.');
         }
 
-        return $holder;
+        if ($buyer instanceof Dealer) {
+            $distributor = $buyer->distributor()->firstOrFail();
+
+            return $holder->is($distributor) ? [$distributor, null] : [$distributor, $holder];
+        }
+
+        return [$holder, null];
+    }
+
+    /**
+     * What a dealer can get through its distributor without picking a
+     * holder: the distributor's own available stock plus what the
+     * distributor can buy upstream from the product's default seller (unless
+     * the distributor owns the product itself).
+     */
+    public function totalAvailableForDealer(Dealer $dealer, int $productId): float
+    {
+        $distributor = $dealer->distributor()->firstOrFail();
+        $total = $this->totalAvailableAt($distributor, $productId);
+
+        $upstream = $this->defaultSeller($distributor, $productId);
+        if (! $upstream->is($distributor)) {
+            $total += $this->totalAvailableAt($upstream, $productId);
+        }
+
+        return $total;
     }
 
     /**
@@ -141,8 +183,10 @@ class SellerStockService
     /** Whether a buyer may buy from a stock holder. */
     public function canBuyFrom(Model $buyer, Model $holder): bool
     {
+        // A dealer may take any holder's stock: its own distributor sells it
+        // directly, any other holder through a chain order.
         if ($buyer instanceof Dealer) {
-            return $holder instanceof Distributor && (int) $holder->getKey() === (int) $buyer->distributor_id;
+            return $holder instanceof Company || $holder instanceof Distributor;
         }
 
         if ($buyer instanceof Distributor) {
@@ -207,7 +251,7 @@ class SellerStockService
      *
      * @return list<array{stock_point_id:int, name:string, on_hand:string, reserved:string, available:string}>
      */
-    private function pointsFor(Model $holder, int $productId): array
+    public function pointsFor(Model $holder, int $productId): array
     {
         $points = StockPoint::query()
             ->where('owner_type', $holder->getMorphClass())

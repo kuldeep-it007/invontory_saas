@@ -46,6 +46,7 @@ class CartService
         private readonly TaxResolutionService $tax,
         private readonly CartSubmissionService $submission,
         private readonly SellerStockService $sellerStock,
+        private readonly ChainOrderService $chains,
     ) {}
 
     /**
@@ -71,7 +72,7 @@ class CartService
             ]);
         }
 
-        return $cart->load(['items.product.collection.category', 'items.product.colour', 'items.seller']);
+        return $cart->load(['items.product.collection.category', 'items.product.colour', 'items.seller', 'items.source']);
     }
 
     /**
@@ -97,11 +98,11 @@ class CartService
 
             // The seller is the holder of the chosen stock points; a plain add
             // keeps the existing line's seller (or the default seller).
-            $seller = $this->chooseSeller($buyer, $product, $allocations, $existing);
+            [$seller, $source] = $this->chooseLine($buyer, $product, $allocations, $existing);
 
-            // Block ordering more than the seller has available (R16.4, R17.1),
-            // unless the tenant permits backorders.
-            $this->assertAvailable($seller, $product, $newQty);
+            // Block ordering more than the seller (or the chain source) has
+            // available (R16.4, R17.1), unless the tenant permits backorders.
+            $this->assertAvailable($buyer, $seller, $source, $product, $newQty);
 
             // Bumping an existing line: fold the new per-point allocation into
             // the line's current split so the total still equals the line qty.
@@ -112,7 +113,7 @@ class CartService
                 $allocations = $current === [] ? $allocations : array_merge($current, $allocations);
             }
 
-            $this->writeLine($cart, $buyer, $seller, $product, $newQty, $existing, $allocations);
+            $this->writeLine($cart, $buyer, $seller, $product, $newQty, $existing, $allocations, $source);
         });
 
         return $this->openCartFor($buyer);
@@ -147,15 +148,15 @@ class CartService
 
             // A new split may move the line to another seller; otherwise the
             // line keeps its seller.
-            $seller = $allocations !== null && $allocations !== []
-                ? $this->sellerStock->sellerFor($buyer, (int) $product->getKey(), $this->pointIds($allocations))
-                : $this->lineSeller($buyer, $item);
+            [$seller, $source] = $allocations !== null && $allocations !== []
+                ? $this->sellerStock->resolveLine($buyer, (int) $product->getKey(), $this->pointIds($allocations))
+                : [$this->lineSeller($buyer, $item), $this->lineSource($item)];
 
-            // Block ordering more than the seller has available (R16.4, R17.1),
-            // unless the tenant permits backorders.
-            $this->assertAvailable($seller, $product, $qty);
+            // Block ordering more than the seller (or the chain source) has
+            // available (R16.4, R17.1), unless the tenant permits backorders.
+            $this->assertAvailable($buyer, $seller, $source, $product, $qty);
 
-            $this->writeLine($cart, $buyer, $seller, $product, $qty, $item, $allocations);
+            $this->writeLine($cart, $buyer, $seller, $product, $qty, $item, $allocations, $source);
         });
 
         return $this->openCartFor($buyer);
@@ -218,13 +219,28 @@ class CartService
                 'product_id' => (int) $item->product_id,
                 'quantity' => (string) $item->quantity,
                 'allocations' => $item->allocations ?? null,
+                'source' => $this->lineSource($item),
             ];
         }
 
         $orders = DB::connection('tenant')->transaction(function () use ($buyer, $groups, $orderType, $cart): array {
             $orders = [];
             foreach ($groups as $group) {
-                $orders[] = $this->submission->submit($buyer, $group['entries'], $orderType, $group['seller']);
+                if ($buyer instanceof Dealer && $group['seller'] instanceof Distributor) {
+                    // Chain orders: what the distributor lacks (or the dealer
+                    // took from another holder) is bought upstream.
+                    $plan = $this->chains->plan($group['seller'], $group['entries']);
+                    $order = $this->submission->submit($buyer, $plan['order'], $orderType, $group['seller']);
+                    $this->chains->placeUpstream($order, $group['seller'], $plan['legs'], $orderType, $this->submission);
+                    $orders[] = $order->refresh()->load('lines');
+
+                    continue;
+                }
+
+                $orders[] = $this->submission->submit($buyer, array_map(
+                    fn (array $entry): array => array_diff_key($entry, ['source' => true]),
+                    $group['entries'],
+                ), $orderType, $group['seller']);
             }
 
             $cart->status = Cart::STATUS_SUBMITTED;
@@ -283,7 +299,7 @@ class CartService
      * onto the cart line (creating or updating). The breakdown reuses the
      * shared {@see PriceResolutionService} so cart and order price identically.
      */
-    private function writeLine(Cart $cart, Model $buyer, Model $seller, Product $product, string $quantity, ?CartItem $existing, ?array $allocations = null): CartItem
+    private function writeLine(Cart $cart, Model $buyer, Model $seller, Product $product, string $quantity, ?CartItem $existing, ?array $allocations = null, ?Model $source = null): CartItem
     {
         $pricingBuyerType = $buyer instanceof Distributor ? 'distributor' : 'dealer';
 
@@ -308,6 +324,8 @@ class CartService
         $attributes = [
             'seller_type' => $seller->getMorphClass(),
             'seller_id' => (int) $seller->getKey(),
+            'source_type' => $source?->getMorphClass(),
+            'source_id' => $source === null ? null : (int) $source->getKey(),
             'quantity' => $quantity,
             'rrp' => $rrp,
             'discount_pct' => $discountPct,
@@ -363,13 +381,20 @@ class CartService
      * {@see InsufficientAvailableStockException} naming the requested vs
      * available quantities.
      */
-    private function assertAvailable(Model $seller, Product $product, string $requestedQty): void
+    private function assertAvailable(Model $buyer, Model $seller, ?Model $source, Product $product, string $requestedQty): void
     {
         if ($this->backordersEnabled()) {
             return;
         }
 
-        $available = $this->sellerStock->totalAvailableAt($seller, (int) $product->getKey());
+        $productId = (int) $product->getKey();
+        $available = match (true) {
+            // Picked another holder's stock: it must be there.
+            $source !== null => $this->sellerStock->totalAvailableAt($source, $productId),
+            // A dealer gets the distributor's stock plus what it can buy upstream.
+            $buyer instanceof Dealer => $this->sellerStock->totalAvailableForDealer($buyer, $productId),
+            default => $this->sellerStock->totalAvailableAt($seller, $productId),
+        };
         $requested = (float) $requestedQty;
 
         if ($requested > $available + 0.0005) {
@@ -383,29 +408,44 @@ class CartService
     }
 
     /**
-     * The seller for an add: the holder of the chosen points, else the
-     * existing line's seller, else the default seller. A line has one seller,
-     * so choosing another seller's points for a product already in the cart
-     * is rejected.
+     * [seller, chain source] for an add: from the chosen points, else the
+     * existing line's, else the default seller with no source. A line has one
+     * seller and one source, so choosing another holder's points for a
+     * product already in the cart is rejected.
      *
      * @param  array<int, array{stock_point_id?: mixed, quantity?: mixed}>|null  $allocations
+     * @return array{0: Model, 1: Model|null}
      */
-    private function chooseSeller(Model $buyer, Product $product, ?array $allocations, ?CartItem $existing): Model
+    private function chooseLine(Model $buyer, Product $product, ?array $allocations, ?CartItem $existing): array
     {
-        $current = $existing !== null ? $this->lineSeller($buyer, $existing) : null;
+        $current = $existing !== null ? [$this->lineSeller($buyer, $existing), $this->lineSource($existing)] : null;
         if ($allocations === null || $allocations === []) {
-            return $current ?? $this->sellerStock->defaultSeller($buyer, (int) $product->getKey());
+            return $current ?? [$this->sellerStock->defaultSeller($buyer, (int) $product->getKey()), null];
         }
 
-        $seller = $this->sellerStock->sellerFor($buyer, (int) $product->getKey(), $this->pointIds($allocations));
-        if ($current !== null && ! $current->is($seller)) {
+        $line = $this->sellerStock->resolveLine($buyer, (int) $product->getKey(), $this->pointIds($allocations));
+        $sameSource = ($current[1] ?? null) === null ? $line[1] === null : ($line[1] !== null && $current[1]->is($line[1]));
+        if ($current !== null && (! $current[0]->is($line[0]) || ! $sameSource)) {
             throw new UnprocessableEntityHttpException(sprintf(
                 '"%s" is already in the cart from another seller. Remove that line first.',
                 $product->name,
             ));
         }
 
-        return $seller;
+        return $line;
+    }
+
+    /** The upstream holder a dealer picked for a line (chain source), if any. */
+    private function lineSource(CartItem $item): ?Model
+    {
+        $type = $item->source_type;
+        if ($type === null || $item->source_id === null || ! in_array($type, [Company::class, Distributor::class], true)) {
+            return null;
+        }
+
+        $source = $type::query()->find((int) $item->source_id);
+
+        return $source instanceof Model ? $source : null;
     }
 
     /** A cart line's seller; lines saved before sellers were recorded use the default. */

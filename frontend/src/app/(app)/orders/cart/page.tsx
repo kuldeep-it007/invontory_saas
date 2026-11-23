@@ -276,7 +276,10 @@ function CartLine({
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
           <p className="text-xs text-muted-foreground">{item.product?.sku ?? ""}</p>
           {item.seller ? (
-            <p className="text-xs text-muted-foreground">Seller: {item.seller.name}</p>
+            <p className="text-xs text-muted-foreground">
+              Seller: {item.seller.name}
+              {item.source ? ` · supplied by ${item.source.name} (linked purchase order)` : ""}
+            </p>
           ) : null}
         </div>
         <button

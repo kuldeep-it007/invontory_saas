@@ -38,7 +38,7 @@ beforeEach(function () {
 /**
  * @param  array<int, Tenant>  $registry
  */
-function provisionNetworkTenant(array &$registry): Tenant
+function d2dProvisionTenant(array &$registry): Tenant
 {
     $suffix = strtolower(bin2hex(random_bytes(4)));
 
@@ -55,7 +55,7 @@ function provisionNetworkTenant(array &$registry): Tenant
     return $tenant;
 }
 
-function networkProduct(string $sku, float $price): Product
+function d2dProduct(string $sku, float $price): Product
 {
     $now = now();
     $categoryId = DB::table('categories')->insertGetId(['name' => 'Cat '.$sku, 'code' => 'C-'.$sku, 'created_at' => $now, 'updated_at' => $now]);
@@ -71,7 +71,7 @@ function networkProduct(string $sku, float $price): Product
     return $product;
 }
 
-function networkStock(Model $holder, Product $product, float $quantity, string $pointName): StockPoint
+function d2dStock(Model $holder, Product $product, float $quantity, string $pointName): StockPoint
 {
     $point = new StockPoint(['name' => $pointName, 'sort_order' => 0]);
     $point->owner()->associate($holder);
@@ -88,7 +88,7 @@ function networkStock(Model $holder, Product $product, float $quantity, string $
     return $point;
 }
 
-function networkOnHand(Model $holder, Product $product): float
+function d2dOnHand(Model $holder, Product $product): float
 {
     return (float) Stock::query()
         ->where('stockable_type', $holder->getMorphClass())
@@ -100,7 +100,7 @@ function networkOnHand(Model $holder, Product $product): float
 /**
  * @param  array<int, Tenant>  $registry
  */
-function teardownNetworkTenants(array $registry): void
+function d2dTeardownTenants(array $registry): void
 {
     foreach ($registry as $t) {
         try {
@@ -115,7 +115,7 @@ function teardownNetworkTenants(array $registry): void
 
 it('splits a cart into one order per seller and moves stock between distributors on confirmation', function () {
     $registry = [];
-    $tenant = provisionNetworkTenant($registry);
+    $tenant = d2dProvisionTenant($registry);
 
     try {
         $tenant->run(function () {
@@ -123,11 +123,11 @@ it('splits a cart into one order per seller and moves stock between distributors
             $north = app(DistributorService::class)->create(['name' => 'North']);
             $south = app(DistributorService::class)->create(['name' => 'South']);
 
-            $tiles = networkProduct('TILE', 100.0);
-            $grout = networkProduct('GROUT', 10.0);
-            networkStock($company, $tiles, 50, 'Main');
-            networkStock($company, $grout, 50, 'Main grout');
-            $southPoint = networkStock($south, $tiles, 8, 'South depot');
+            $tiles = d2dProduct('TILE', 100.0);
+            $grout = d2dProduct('GROUT', 10.0);
+            d2dStock($company, $tiles, 50, 'Main');
+            d2dStock($company, $grout, 50, 'Main grout');
+            $southPoint = d2dStock($south, $tiles, 8, 'South depot');
 
             $cart = app(CartService::class);
             // Tiles from South's depot (distributor to distributor), grout from the Company.
@@ -148,46 +148,46 @@ it('splits a cart into one order per seller and moves stock between distributors
 
             app(OrderConfirmationService::class)->confirm($d2d->fresh());
 
-            expect(networkOnHand($south, $tiles))->toBe(3.0)
-                ->and(networkOnHand($north, $tiles))->toBe(5.0)
-                ->and(networkOnHand($company, $tiles))->toBe(50.0);
+            expect(d2dOnHand($south, $tiles))->toBe(3.0)
+                ->and(d2dOnHand($north, $tiles))->toBe(5.0)
+                ->and(d2dOnHand($company, $tiles))->toBe(50.0);
         });
     } finally {
-        teardownNetworkTenants($registry);
+        d2dTeardownTenants($registry);
     }
 });
 
 it('blocks ordering more than the chosen distributor holds', function () {
     $registry = [];
-    $tenant = provisionNetworkTenant($registry);
+    $tenant = d2dProvisionTenant($registry);
 
     try {
         $tenant->run(function () {
             $north = app(DistributorService::class)->create(['name' => 'North']);
             $south = app(DistributorService::class)->create(['name' => 'South']);
-            $tiles = networkProduct('TILE', 100.0);
-            $southPoint = networkStock($south, $tiles, 8, 'South depot');
+            $tiles = d2dProduct('TILE', 100.0);
+            $southPoint = d2dStock($south, $tiles, 8, 'South depot');
 
             expect(fn () => app(CartService::class)->addItem($north, $tiles->id, 9, [['stock_point_id' => $southPoint->id, 'quantity' => 9]]))
                 ->toThrow(UnprocessableEntityHttpException::class);
         });
     } finally {
-        teardownNetworkTenants($registry);
+        d2dTeardownTenants($registry);
     }
 });
 
 it('sells a distributor-owned product from its owner by default', function () {
     $registry = [];
-    $tenant = provisionNetworkTenant($registry);
+    $tenant = d2dProvisionTenant($registry);
 
     try {
         $tenant->run(function () {
             $north = app(DistributorService::class)->create(['name' => 'North']);
             $south = app(DistributorService::class)->create(['name' => 'South']);
-            $own = networkProduct('SOUTH-OWN', 40.0);
+            $own = d2dProduct('SOUTH-OWN', 40.0);
             $own->owner_distributor_id = $south->id;
             $own->save();
-            networkStock($south, $own, 10, 'South depot');
+            d2dStock($south, $own, 10, 'South depot');
 
             $cart = app(CartService::class);
             $cart->addItem($north, $own->id, 2);
@@ -197,6 +197,6 @@ it('sells a distributor-owned product from its owner by default', function () {
                 ->and((int) $order->seller_id)->toBe($south->id);
         });
     } finally {
-        teardownNetworkTenants($registry);
+        d2dTeardownTenants($registry);
     }
 });

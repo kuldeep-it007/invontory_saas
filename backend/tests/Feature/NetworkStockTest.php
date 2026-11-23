@@ -121,9 +121,20 @@ describe('chosen stock points', function () {
         $this->sellers->sellerFor($this->north, $this->companyProduct->id, [$this->northPoint->id]);
     })->throws(UnprocessableEntityHttpException::class);
 
-    it('refuses a dealer buying from anyone but its distributor', function () {
-        $this->sellers->sellerFor($this->dealer, $this->companyProduct->id, [$this->southPoint->id]);
-    })->throws(UnprocessableEntityHttpException::class);
+    it('keeps a dealer buying from its distributor and makes another holder the chain source', function () {
+        [$seller, $source] = $this->sellers->resolveLine($this->dealer, $this->companyProduct->id, [$this->southPoint->id]);
+        [$ownSeller, $ownSource] = $this->sellers->resolveLine($this->dealer, $this->companyProduct->id, [$this->northPoint->id]);
+
+        expect($seller->is($this->north))->toBeTrue()
+            ->and($source->is($this->south))->toBeTrue()
+            ->and($ownSeller->is($this->north))->toBeTrue()
+            ->and($ownSource)->toBeNull();
+    });
+
+    it('counts what a distributor can buy upstream in a dealer\'s availability', function () {
+        // North holds none; the Company (the product's owner) holds 50.
+        expect($this->sellers->totalAvailableForDealer($this->dealer, $this->companyProduct->id))->toBe(50.0);
+    });
 
     it('refuses one line split across two sellers', function () {
         $this->sellers->sellerFor($this->north, $this->companyProduct->id, [$this->companyPoint->id, $this->southPoint->id]);
@@ -144,6 +155,6 @@ describe('network holders of a product', function () {
         $forDealer = collect($this->sellers->holdersForProduct($this->companyProduct->id, $this->dealer))->pluck('orderable', 'holder_name')->all();
 
         expect($forNorth)->toBe(['Acme' => true, 'South' => true])
-            ->and($forDealer)->toBe(['Acme' => false, 'North' => true, 'South' => false]);
+            ->and($forDealer)->toBe(['Acme' => true, 'North' => true, 'South' => true]);
     });
 });
