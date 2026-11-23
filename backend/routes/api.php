@@ -391,6 +391,12 @@ Route::middleware('tenant')->group(function () {
 
     Route::get('/products', [ProductController::class, 'index'])
         ->middleware('permission:catalog.view');
+    // A product's stock across the network, grouped by holder (Company and
+    // each distributor) and stock point. A Company user only reaches its own
+    // products (others answer 404 through the catalogue scope).
+    Route::get('/products/{product}/stock', [ProductController::class, 'stock'])
+        ->middleware('permission:catalog.view')
+        ->whereNumber('product');
     Route::post('/products', [ProductController::class, 'store'])
         ->middleware(['permission:catalog.manage', 'subscription.active']);
     Route::patch('/products/{product}', [ProductController::class, 'update'])

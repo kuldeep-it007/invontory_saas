@@ -4,6 +4,7 @@ import type {
   CartBuyer,
   SellerStockSourcing,
   StockAllocation,
+  StockHolder,
   ImpersonationContext,
   ImpersonationTargets,
   CatalogAttribute,
@@ -213,6 +214,8 @@ export const productApi = {
   update: (id: number, payload: Record<string, unknown>) =>
     api.patch<Resource<Product>>(`/products/${id}`, payload),
   delete: (id: number) => api.del<{ message: string }>(`/products/${id}`),
+  /** The product's stock across the network, grouped by holder and stock point. */
+  stock: (id: number) => api.get<Resource<StockHolder[]>>(`/products/${id}/stock`),
 };
 
 /* ─── Stock / inventory (R13, R14, R18, R19) ──────────────────────────────── */
@@ -289,8 +292,9 @@ export const cartApi = {
   remove: (buyer: CartBuyer, itemId: number) =>
     api.del<Resource<Cart>>(`/cart/items/${itemId}`, { ...buyer }),
   clear: (buyer: CartBuyer) => api.del<Resource<Cart>>("/cart", { ...buyer }),
+  /** One order per seller: `data` is the first, `orders` lists all of them. */
   submit: (buyer: CartBuyer, orderType = "standard") =>
-    api.post<Resource<Order>>("/cart/submit", { ...buyer, order_type: orderType }),
+    api.post<Resource<Order> & { orders?: Order[] }>("/cart/submit", { ...buyer, order_type: orderType }),
 };
 
 /* ─── Party impersonation (R8.6) ──────────────────────────────────────────── */

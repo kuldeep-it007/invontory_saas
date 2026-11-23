@@ -14,6 +14,7 @@ use App\Models\Colour;
 use App\Services\CatalogService;
 use App\Services\CatalogVisibilityService;
 use App\Support\CatalogOwner;
+use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -65,7 +66,7 @@ class CatalogController extends Controller
 
     public function categories(Request $request): JsonResponse
     {
-        return response()->json($this->catalog->paginateCategories($this->listOwnerKey($request)));
+        return response()->json($this->catalog->paginateCategories($this->listFilter($request)));
     }
 
     public function storeCategory(StoreCategoryRequest $request): JsonResponse
@@ -78,7 +79,7 @@ class CatalogController extends Controller
 
     public function collections(Request $request): JsonResponse
     {
-        return response()->json($this->catalog->paginateCollections($this->listOwnerKey($request)));
+        return response()->json($this->catalog->paginateCollections($this->listFilter($request)));
     }
 
     public function storeCollection(StoreCollectionRequest $request): JsonResponse
@@ -91,7 +92,7 @@ class CatalogController extends Controller
 
     public function colours(Request $request): JsonResponse
     {
-        return response()->json($this->catalog->paginateColours($this->listOwnerKey($request)));
+        return response()->json($this->catalog->paginateColours($this->listFilter($request)));
     }
 
     public function storeColour(StoreColourRequest $request): JsonResponse
@@ -180,8 +181,9 @@ class CatalogController extends Controller
         return response()->json(['message' => 'Colour deleted.']);
     }
 
-    private function listOwnerKey(Request $request): int
+    /** Network catalogue by default; the caller's own rows with `?owner=mine`. */
+    private function listFilter(Request $request): Closure
     {
-        return CatalogOwner::listKeyFor($request->user(), $request->query('owner'));
+        return CatalogOwner::listFilter($request->user(), $request->query('owner'));
     }
 }

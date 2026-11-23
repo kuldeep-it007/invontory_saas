@@ -26,6 +26,12 @@ export function AddDistributorStockModal({
 }): JSX.Element | null {
   const distributors = useDistributorOptions();
   const products = useProductOptions();
+  // A distributor stocks its own products as well as Company products.
+  const ownProducts = useProductOptions("mine");
+  const productOptions = [
+    ...(fixedDistributorId != null ? (ownProducts.data?.data ?? []) : []),
+    ...(products.data?.data ?? []).filter((p) => fixedDistributorId == null || !p.owner_distributor_id),
+  ];
   const { addDistributorStock } = useStockMutation();
   const { toast } = useAlerts();
 
@@ -93,7 +99,7 @@ export function AddDistributorStockModal({
           label="Product"
           value={productId}
           onChange={setProductId}
-          options={(products.data?.data ?? []).map((p) => ({ value: String(p.id), label: `${p.name} (${p.sku})` }))}
+          options={productOptions.map((p) => ({ value: String(p.id), label: `${p.name} (${p.sku})` }))}
         />
         <Field label="Quantity" type="number" step="any" required value={quantity} onChange={setQuantity} />
         <Field label="Reason (optional)" value={reason} onChange={setReason} />

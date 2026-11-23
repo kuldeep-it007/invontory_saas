@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 
 import { useAlerts } from "@/components/providers/alerts-provider";
 import { useAuth } from "@/components/providers/auth-provider";
+import { StockHoldersTable } from "@/components/stock/stock-holders-table";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Field, Pagination, Select } from "@/components/ui/form";
@@ -20,6 +21,7 @@ import {
   useCreateProduct,
   useDeleteProduct,
   useProducts,
+  useProductStock,
   useUpdateProduct,
 } from "@/lib/api/hooks";
 import type { Product } from "@/lib/api/types";
@@ -37,6 +39,7 @@ export default function ProductsPage(): JSX.Element {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Product | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [stockFor, setStockFor] = useState<Product | null>(null);
   const { data, isLoading, error } = useProducts(page, "mine");
   const del = useDeleteProduct();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -69,6 +72,15 @@ export default function ProductsPage(): JSX.Element {
   }
 
   const columns: Column<Product>[] = [
+    {
+      header: "",
+      className: "w-10",
+      cell: (p) => (
+        <IconButton label={`Stock of ${p.name}`} onClick={() => setStockFor(p)}>
+          <Icon.warehouse size={16} />
+        </IconButton>
+      ),
+    },
     { header: "SKU", cell: (p) => <span className="font-mono text-xs">{p.sku}</span> },
     { header: "Name", cell: (p) => <span className="font-medium">{p.name}</span> },
     { header: "HSN", cell: (p) => <span className="font-mono text-xs">{p.hsn_code ?? "—"}</span> },
@@ -137,7 +149,28 @@ export default function ProductsPage(): JSX.Element {
       ) : null}
 
       <ProductModal open={modalOpen} product={editing} onClose={() => setModalOpen(false)} />
+      <ProductStockModal product={stockFor} onClose={() => setStockFor(null)} />
     </div>
+  );
+}
+
+/**
+ * Stock of one product across the network: the Company's stock points and
+ * each distributor's, as separate blocks.
+ */
+function ProductStockModal({ product, onClose }: { product: Product | null; onClose: () => void }): JSX.Element {
+  const { data, isLoading, error } = useProductStock(product?.id ?? null);
+
+  return (
+    <Modal open={product !== null} size="lg" onClose={onClose} title={product ? `Stock — ${product.name}` : "Stock"}>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading stock…</p>
+      ) : error ? (
+        <p className="text-sm text-danger">{errorMessage(error)}</p>
+      ) : (
+        <StockHoldersTable holders={data?.data ?? []} />
+      )}
+    </Modal>
   );
 }
 

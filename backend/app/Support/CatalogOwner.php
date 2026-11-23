@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Support;
 
+use App\Models\Concerns\HasCatalogOwner;
 use App\Models\User;
+use Closure;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -97,13 +100,35 @@ final class CatalogOwner
     }
 
     /**
-     * Owner key a catalogue list shows: the caller's own rows for
-     * `owner=mine` (management screens), otherwise the Company's rows (the
-     * orderable catalogue).
+     * Filter for a catalogue list (a query on a {@see HasCatalogOwner} model):
+     *
+     *  - `owner=mine` (management screens): the caller's own rows;
+     *  - otherwise the orderable network catalogue: the Company's rows for a
+     *    Company user (or no user), everyone else's rows for a Distributor
+     *    (it cannot buy its own products), every row for a Dealer.
+     *
+     * @return Closure(Builder<Model>): void
      */
-    public static function listKeyFor(?User $user, mixed $ownerParam): int
+    public static function listFilter(?User $user, mixed $ownerParam): Closure
     {
-        return $ownerParam === 'mine' && $user !== null ? self::keyFor($user) : self::COMPANY;
+        return function (Builder $query) use ($user, $ownerParam): void {
+            $column = $query->getModel()->qualifyColumn('owner_key');
+
+            if ($ownerParam === 'mine' && $user !== null) {
+                $query->where($column, self::keyFor($user));
+
+                return;
+            }
+            if ($user === null || self::isCompanyUser($user)) {
+                $query->where($column, self::COMPANY);
+
+                return;
+            }
+            $distributorId = self::distributorIdOf($user);
+            if ($distributorId !== null) {
+                $query->where($column, '!=', $distributorId);
+            }
+        };
     }
 
     /**

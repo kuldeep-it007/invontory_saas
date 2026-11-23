@@ -8,7 +8,7 @@ use App\Exceptions\QuotaExceededException;
 use App\Http\Controllers\ProductController;
 use App\Models\PlanLimit;
 use App\Models\Product;
-use App\Support\CatalogOwner;
+use Closure;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 /**
@@ -40,11 +40,11 @@ class ProductService
      *
      * @return LengthAwarePaginator<int, Product>
      */
-    public function paginate(int $ownerKey = CatalogOwner::COMPANY, int $perPage = 25): LengthAwarePaginator
+    public function paginate(?Closure $filter = null, int $perPage = 25): LengthAwarePaginator
     {
         return Product::query()
-            ->ownedBy($ownerKey)
-            ->with(['collection.category', 'colour'])
+            ->when($filter !== null, $filter)
+            ->with(['collection.category', 'colour', 'ownerDistributor:id,name'])
             ->orderBy('sku')
             ->paginate($perPage);
     }

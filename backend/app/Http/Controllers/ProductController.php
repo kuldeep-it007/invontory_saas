@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Services\PriceResolutionService;
 use App\Services\ProductService;
 use App\Services\ResolvedPrice;
+use App\Services\SellerStockService;
 use App\Support\CatalogOwner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -35,7 +36,7 @@ class ProductController extends Controller
     public function index(Request $request): JsonResponse
     {
         $page = $this->products->paginate(
-            CatalogOwner::listKeyFor($request->user(), $request->query('owner')),
+            CatalogOwner::listFilter($request->user(), $request->query('owner')),
             max(1, min($request->integer('per_page', 25), 100)),
         );
         $resolved = $this->prices->resolveMany($page->getCollection());
@@ -90,6 +91,16 @@ class ProductController extends Controller
         $product = $this->withPricing($this->products->update($product, $request->validated()));
 
         return response()->json(['data' => $product]);
+    }
+
+    /**
+     * GET /api/products/{product}/stock — the product's stock across the
+     * network: one group per holder (Company, then distributors) with its
+     * stock points and on-hand / reserved / available quantities.
+     */
+    public function stock(Product $product, SellerStockService $stock): JsonResponse
+    {
+        return response()->json(['data' => $stock->holdersForProduct((int) $product->getKey())]);
     }
 
     /**

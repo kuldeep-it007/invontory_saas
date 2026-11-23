@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Models\Concerns\TenantAuditable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use OwenIt\Auditing\Contracts\Auditable;
 
 /**
@@ -40,6 +41,8 @@ class CartItem extends Model implements Auditable
     protected $fillable = [
         'cart_id',
         'product_id',
+        'seller_type',
+        'seller_id',
         'quantity',
         'allocations',
         'rrp',
@@ -54,6 +57,7 @@ class CartItem extends Model implements Auditable
     protected $casts = [
         'cart_id' => 'integer',
         'product_id' => 'integer',
+        'seller_id' => 'integer',
         'quantity' => 'decimal:3',
         'allocations' => 'array',
         'rrp' => 'decimal:2',
@@ -83,5 +87,16 @@ class CartItem extends Model implements Auditable
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    /**
+     * Who sells this line (Company or a distributor); null on lines saved
+     * before sellers were recorded.
+     *
+     * @return MorphTo<Model, $this>
+     */
+    public function seller(): MorphTo
+    {
+        return $this->morphTo();
     }
 }

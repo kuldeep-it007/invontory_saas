@@ -24,8 +24,8 @@ use InvalidArgumentException;
  *      Discounts are never combined. A discount is a percentage or a fixed
  *      amount. Ties at the same level go to the more specific catalog scope
  *      (product > colour > collection > category), then the larger saving.
- *      Only discounts owned by the product's owner apply, plus, for a dealer
- *      buyer, discounts owned by the dealer's distributor.
+ *      Only discounts owned by the product's owner apply, plus discounts
+ *      owned by the selling distributor (a dealer buyer's distributor by default).
  *   4. CLAMP so the price is NEVER negative (R12.4).
  *
  * Amounts are in the tenant's single currency (R39.1). {@see computePrice()}
@@ -42,12 +42,14 @@ class PriceResolutionService
      * Resolve the price of one product for a Buyer.
      *
      * @param  string|null  $buyerType  `distributor` / `dealer` (or the model class), or null.
+     * @param  int|null  $sellerDistributorId  the selling distributor, whose own discounts also apply;
+     *                                         defaults to a dealer buyer's distributor.
      *
      * @throws InvalidArgumentException when no base price is configured.
      */
-    public function resolveForProduct(Product $product, ?string $buyerType = null, ?int $buyerId = null): ResolvedPrice
+    public function resolveForProduct(Product $product, ?string $buyerType = null, ?int $buyerId = null, ?int $sellerDistributorId = null): ResolvedPrice
     {
-        $resolved = $this->resolveMany(collect([$product]), $buyerType, $buyerId, strict: true);
+        $resolved = $this->resolveMany(collect([$product]), $buyerType, $buyerId, strict: true, sellerDistributorId: $sellerDistributorId);
 
         return $resolved[(int) $product->getKey()];
     }
@@ -62,7 +64,7 @@ class PriceResolutionService
      *
      * @throws InvalidArgumentException when $strict and a product has no base price.
      */
-    public function resolveMany(Collection $products, ?string $buyerType = null, ?int $buyerId = null, bool $strict = false): array
+    public function resolveMany(Collection $products, ?string $buyerType = null, ?int $buyerId = null, bool $strict = false, ?int $sellerDistributorId = null): array
     {
         if ($products->isEmpty()) {
             return [];
@@ -101,7 +103,7 @@ class PriceResolutionService
             $markupType = $price?->markup_type;
             $markupValue = $price?->markup_value === null ? null : (float) $price->markup_value;
             $markedUp = $this->markUp(max(0.0, (float) $base), $markupType, $markupValue);
-            $best = $this->bestDiscount($candidates, $product, $dealerId, $distributorId, $markedUp);
+            $best = $this->bestDiscount($candidates, $product, $dealerId, $distributorId, $markedUp, $sellerDistributorId);
 
             $out[(int) $product->getKey()] = $this->computePrice((float) $base, $markupType, $markupValue, $best['discount'] ?? null, $best['level'] ?? null);
         }
@@ -208,20 +210,22 @@ class PriceResolutionService
      * @param  Collection<int, Discount>  $candidates
      * @return array{discount: Discount, level: string}|null
      */
-    private function bestDiscount(Collection $candidates, Product $product, ?int $dealerId, ?int $distributorId, float $markedUp): ?array
+    private function bestDiscount(Collection $candidates, Product $product, ?int $dealerId, ?int $distributorId, float $markedUp, ?int $sellerDistributorId = null): ?array
     {
         $categoryId = $product->collection?->category_id;
         $best = null;
         $bestKey = null;
 
         $productOwner = $product->owner_distributor_id === null ? null : (int) $product->owner_distributor_id;
-        $servingDistributor = $dealerId !== null ? $distributorId : null;
+        // The selling distributor (a dealer's own distributor by default) may
+        // discount what it sells, on top of the owner's discounts.
+        $sellingDistributor = $sellerDistributorId ?? ($dealerId !== null ? $distributorId : null);
 
         foreach ($candidates as $discount) {
-            // Each owner prices its own products; a distributor may also
-            // discount anything for its own dealers.
+            // Each owner prices its own products; the selling distributor may
+            // also discount what it sells.
             $discountOwner = $discount->owner_distributor_id;
-            if ($discountOwner !== $productOwner && ($discountOwner === null || $discountOwner !== $servingDistributor)) {
+            if ($discountOwner !== $productOwner && ($discountOwner === null || $discountOwner !== $sellingDistributor)) {
                 continue;
             }
 

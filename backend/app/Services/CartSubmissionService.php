@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\QuotaExceededException;
+use App\Http\Controllers\OrderController;
 use App\Mail\OrderPlacedMail;
 use App\Models\Company;
 use App\Models\Dealer;
-use App\Models\Notification;
 use App\Models\Distributor;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderLine;
 use App\Models\OrderLineAllocation;
@@ -19,12 +21,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use InvalidArgumentException;
+use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
 /**
  * Cart → Order submission service (R20.1–R20.4).
  *
  * The focused, single-responsibility service the thin
- * {@see \App\Http\Controllers\OrderController} delegates to for turning a
+ * {@see OrderController} delegates to for turning a
  * submitted cart into a durable Order. A cart accumulates multiple lines before
  * submission (R20.3); submitting a cart of N entries creates EXACTLY ONE
  * {@see Order} with one {@see OrderLine} per cart entry — cart-to-order fidelity
@@ -62,20 +65,23 @@ class CartSubmissionService
         private readonly QuotaService $quota,
         private readonly WhiteLabelService $whiteLabel,
         private readonly NotificationService $notifications,
+        private readonly SellerStockService $sellerStock,
     ) {}
 
     /**
      * Submit a cart, creating one Order with one Order_Line per entry (R20.4).
      *
-     * @param  Distributor|Dealer  $buyer    The Buyer placing the order (R20.1, R20.2).
+     * @param  Distributor|Dealer  $buyer  The Buyer placing the order (R20.1, R20.2).
      * @param  array<int, array{product_id: int, quantity: string|int|float}>  $entries
-     *         The cart entries; each becomes exactly one order line.
+     *                                                                                   The cart entries; each becomes exactly one order line.
      * @param  string  $orderType  The order flow discriminator (R23); defaults to `standard`.
+     * @param  Model|null  $seller  The seller (Company or Distributor) when the caller chose one,
+     *                              e.g. another distributor; null = the buyer's default seller.
      *
-     * @throws InvalidArgumentException            When the cart is empty or a product is unknown.
-     * @throws \App\Exceptions\QuotaExceededException When the monthly order quota is reached (403).
+     * @throws InvalidArgumentException When the cart is empty or a product is unknown.
+     * @throws QuotaExceededException When the monthly order quota is reached (403).
      */
-    public function submit(Model $buyer, array $entries, string $orderType = 'standard'): Order
+    public function submit(Model $buyer, array $entries, string $orderType = 'standard', ?Model $seller = null): Order
     {
         if ($entries === []) {
             throw new InvalidArgumentException('Cannot submit an empty cart; at least one line is required.');
@@ -86,7 +92,11 @@ class CartSubmissionService
         // Enforce the monthly order quota BEFORE creating the order (R5.3).
         $this->quota->assertAllows(PlanLimit::MAX_ORDERS_PER_MONTH);
 
-        [$sellerType, $sellerId] = $this->resolveSeller($buyer);
+        $seller ??= $this->sellerForEntries($buyer, $entries);
+        [$sellerType, $sellerId] = [$seller->getMorphClass(), (int) $seller->getKey()];
+        $sellerDistributorId = $seller instanceof Distributor
+            ? (int) $seller->getKey()
+            : ($buyer instanceof Dealer ? (int) $buyer->distributor_id : null);
         $buyerType = $buyer->getMorphClass();
         $buyerId = (int) $buyer->getKey();
 
@@ -109,6 +119,7 @@ class CartSubmissionService
             $sellerId,
             $pricingBuyerType,
             $orderType,
+            $sellerDistributorId,
         ): Order {
             $order = Order::create([
                 'buyer_type' => $buyerType,
@@ -127,7 +138,7 @@ class CartSubmissionService
                 $product = $this->resolveProduct((int) $entry['product_id']);
                 $quantity = $this->normalizeQuantity($entry['quantity']);
 
-                $resolved = $this->prices->resolveForProduct($product, $pricingBuyerType, $buyerId);
+                $resolved = $this->prices->resolveForProduct($product, $pricingBuyerType, $buyerId, $sellerDistributorId);
 
                 $unitPrice = $resolved->final;
                 $discount = max(0.0, $resolved->markedUp - $resolved->final);
@@ -238,27 +249,32 @@ class CartSubmissionService
     }
 
     /**
-     * Resolve the Seller for a Buyer (R20.1, R20.2):
-     *   • a Distributor sells-from the single tenant Company (R20.1);
-     *   • a Dealer sells-from its serving Distributor (R20.2).
+     * Resolve the single Seller of a direct submission (R20.1, R20.2): the
+     * holder of each line's chosen stock points, else the line's default
+     * seller ({@see SellerStockService::defaultSeller()}). Every line must
+     * resolve to the same seller, since one order has one seller.
      *
-     * @return array{0: string, 1: int} [seller morph type, seller id]
+     * @param  array<int, array<string, mixed>>  $entries
+     *
+     * @throws UnprocessableEntityHttpException when the lines span several sellers.
      */
-    private function resolveSeller(Model $buyer): array
+    private function sellerForEntries(Model $buyer, array $entries): Model
     {
-        if ($buyer instanceof Distributor) {
-            // Distributor orders are placed against the Company catalogue (R20.1).
-            $company = Company::query()->firstOrFail();
+        $seller = null;
+        foreach ($entries as $entry) {
+            $pointIds = array_values(array_filter(array_map(
+                fn ($allocation): int => (int) ($allocation['stock_point_id'] ?? 0),
+                is_array($entry['allocations'] ?? null) ? $entry['allocations'] : [],
+            )));
+            $lineSeller = $this->sellerStock->sellerFor($buyer, (int) $entry['product_id'], $pointIds);
 
-            return [$company->getMorphClass(), (int) $company->getKey()];
+            if ($seller !== null && ! $seller->is($lineSeller)) {
+                throw new UnprocessableEntityHttpException('All lines of one order must come from the same seller.');
+            }
+            $seller = $lineSeller;
         }
 
-        // Dealer orders are placed against the serving Distributor's stock
-        // (R20.2); the Dealer belongs to exactly one Distributor (R10.3).
-        /** @var Dealer $buyer */
-        $distributor = $buyer->distributor()->firstOrFail();
-
-        return [$distributor->getMorphClass(), (int) $distributor->getKey()];
+        return $seller;
     }
 
     /**

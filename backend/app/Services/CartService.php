@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\Cart;
 use App\Models\CartItem;
+use App\Models\Company;
 use App\Models\Dealer;
 use App\Models\Distributor;
 use App\Models\Order;
@@ -70,7 +71,7 @@ class CartService
             ]);
         }
 
-        return $cart->load(['items.product.collection.category', 'items.product.colour']);
+        return $cart->load(['items.product.collection.category', 'items.product.colour', 'items.seller']);
     }
 
     /**
@@ -94,9 +95,13 @@ class CartService
                 ? $this->addQuantities((string) $existing->quantity, $qty)
                 : $qty;
 
+            // The seller is the holder of the chosen stock points; a plain add
+            // keeps the existing line's seller (or the default seller).
+            $seller = $this->chooseSeller($buyer, $product, $allocations, $existing);
+
             // Block ordering more than the seller has available (R16.4, R17.1),
             // unless the tenant permits backorders.
-            $this->assertAvailable($buyer, $product, $newQty);
+            $this->assertAvailable($seller, $product, $newQty);
 
             // Bumping an existing line: fold the new per-point allocation into
             // the line's current split so the total still equals the line qty.
@@ -107,7 +112,7 @@ class CartService
                 $allocations = $current === [] ? $allocations : array_merge($current, $allocations);
             }
 
-            $this->writeLine($cart, $buyer, $product, $newQty, $existing, $allocations);
+            $this->writeLine($cart, $buyer, $seller, $product, $newQty, $existing, $allocations);
         });
 
         return $this->openCartFor($buyer);
@@ -140,11 +145,17 @@ class CartService
             $product = $this->resolveProduct((int) $item->product_id);
             $qty = $this->normalizeQuantity($quantity);
 
+            // A new split may move the line to another seller; otherwise the
+            // line keeps its seller.
+            $seller = $allocations !== null && $allocations !== []
+                ? $this->sellerStock->sellerFor($buyer, (int) $product->getKey(), $this->pointIds($allocations))
+                : $this->lineSeller($buyer, $item);
+
             // Block ordering more than the seller has available (R16.4, R17.1),
             // unless the tenant permits backorders.
-            $this->assertAvailable($buyer, $product, $qty);
+            $this->assertAvailable($seller, $product, $qty);
 
-            $this->writeLine($cart, $buyer, $product, $qty, $item, $allocations);
+            $this->writeLine($cart, $buyer, $seller, $product, $qty, $item, $allocations);
         });
 
         return $this->openCartFor($buyer);
@@ -178,15 +189,18 @@ class CartService
     }
 
     /**
-     * Submit the Buyer's open cart into exactly one Order (R20.4), then mark the
-     * cart `submitted` and link it to the created order. The heavy lifting
-     * (quota, seller resolution, order-line pricing, notifications) is reused
+     * Submit the Buyer's open cart (R20.4): one Order per seller, so a cart
+     * mixing Company stock and other distributors' stock becomes one order to
+     * each. The cart is then marked `submitted` and linked to the first order.
+     * The heavy lifting (quota, order-line pricing, notifications) is reused
      * from {@see CartSubmissionService} so the cart and the direct submit path
-     * price identically.
+     * price identically. All orders are created in one transaction.
+     *
+     * @return list<Order>
      *
      * @throws InvalidArgumentException When the cart is empty.
      */
-    public function submit(Model $buyer, string $orderType = 'standard'): Order
+    public function submitAll(Model $buyer, string $orderType = 'standard'): array
     {
         $cart = $this->openCartFor($buyer);
 
@@ -194,21 +208,42 @@ class CartService
             throw new InvalidArgumentException('Cannot submit an empty cart; add at least one item.');
         }
 
-        $entries = $cart->items
-            ->map(fn (CartItem $item): array => [
+        /** @var array<string, array{seller: Model, entries: list<array<string, mixed>>}> $groups */
+        $groups = [];
+        foreach ($cart->items as $item) {
+            $seller = $this->lineSeller($buyer, $item);
+            $key = $seller->getMorphClass().'#'.$seller->getKey();
+            $groups[$key] ??= ['seller' => $seller, 'entries' => []];
+            $groups[$key]['entries'][] = [
                 'product_id' => (int) $item->product_id,
                 'quantity' => (string) $item->quantity,
                 'allocations' => $item->allocations ?? null,
-            ])
-            ->all();
+            ];
+        }
 
-        $order = $this->submission->submit($buyer, $entries, $orderType);
+        $orders = DB::connection('tenant')->transaction(function () use ($buyer, $groups, $orderType, $cart): array {
+            $orders = [];
+            foreach ($groups as $group) {
+                $orders[] = $this->submission->submit($buyer, $group['entries'], $orderType, $group['seller']);
+            }
 
-        $cart->status = Cart::STATUS_SUBMITTED;
-        $cart->order_id = (int) $order->getKey();
-        $cart->save();
+            $cart->status = Cart::STATUS_SUBMITTED;
+            $cart->order_id = (int) $orders[0]->getKey();
+            $cart->save();
 
-        return $order;
+            return $orders;
+        });
+
+        return $orders;
+    }
+
+    /**
+     * Submit the cart and return the first order (single-seller carts make
+     * exactly one). See {@see submitAll()}.
+     */
+    public function submit(Model $buyer, string $orderType = 'standard'): Order
+    {
+        return $this->submitAll($buyer, $orderType)[0];
     }
 
     /**
@@ -248,11 +283,16 @@ class CartService
      * onto the cart line (creating or updating). The breakdown reuses the
      * shared {@see PriceResolutionService} so cart and order price identically.
      */
-    private function writeLine(Cart $cart, Model $buyer, Product $product, string $quantity, ?CartItem $existing, ?array $allocations = null): CartItem
+    private function writeLine(Cart $cart, Model $buyer, Model $seller, Product $product, string $quantity, ?CartItem $existing, ?array $allocations = null): CartItem
     {
         $pricingBuyerType = $buyer instanceof Distributor ? 'distributor' : 'dealer';
 
-        $resolved = $this->prices->resolveForProduct($product, $pricingBuyerType, (int) $buyer->getKey());
+        $resolved = $this->prices->resolveForProduct(
+            $product,
+            $pricingBuyerType,
+            (int) $buyer->getKey(),
+            $seller instanceof Distributor ? (int) $seller->getKey() : null,
+        );
 
         $rrp = round($resolved->markedUp, 2);
         $unitPrice = round($resolved->final, 2);
@@ -266,6 +306,8 @@ class CartService
         $totalAmount = round($netAmount + $taxAmount, 2);
 
         $attributes = [
+            'seller_type' => $seller->getMorphClass(),
+            'seller_id' => (int) $seller->getKey(),
             'quantity' => $quantity,
             'rrp' => $rrp,
             'discount_pct' => $discountPct,
@@ -315,19 +357,19 @@ class CartService
     }
 
     /**
-     * Reject a cart line whose quantity exceeds what the buyer's SELLER has
+     * Reject a cart line whose quantity exceeds what the line's SELLER has
      * available for the product across all its stock points (R16.4, R17.1),
      * unless the tenant permits backorders. Throws a 422
      * {@see InsufficientAvailableStockException} naming the requested vs
      * available quantities.
      */
-    private function assertAvailable(Model $buyer, Product $product, string $requestedQty): void
+    private function assertAvailable(Model $seller, Product $product, string $requestedQty): void
     {
         if ($this->backordersEnabled()) {
             return;
         }
 
-        $available = $this->sellerStock->totalAvailableForBuyerProduct($buyer, (int) $product->getKey());
+        $available = $this->sellerStock->totalAvailableAt($seller, (int) $product->getKey());
         $requested = (float) $requestedQty;
 
         if ($requested > $available + 0.0005) {
@@ -338,6 +380,58 @@ class CartService
                 rtrim(rtrim($requestedQty, '0'), '.'),
             ));
         }
+    }
+
+    /**
+     * The seller for an add: the holder of the chosen points, else the
+     * existing line's seller, else the default seller. A line has one seller,
+     * so choosing another seller's points for a product already in the cart
+     * is rejected.
+     *
+     * @param  array<int, array{stock_point_id?: mixed, quantity?: mixed}>|null  $allocations
+     */
+    private function chooseSeller(Model $buyer, Product $product, ?array $allocations, ?CartItem $existing): Model
+    {
+        $current = $existing !== null ? $this->lineSeller($buyer, $existing) : null;
+        if ($allocations === null || $allocations === []) {
+            return $current ?? $this->sellerStock->defaultSeller($buyer, (int) $product->getKey());
+        }
+
+        $seller = $this->sellerStock->sellerFor($buyer, (int) $product->getKey(), $this->pointIds($allocations));
+        if ($current !== null && ! $current->is($seller)) {
+            throw new UnprocessableEntityHttpException(sprintf(
+                '"%s" is already in the cart from another seller. Remove that line first.',
+                $product->name,
+            ));
+        }
+
+        return $seller;
+    }
+
+    /** A cart line's seller; lines saved before sellers were recorded use the default. */
+    private function lineSeller(Model $buyer, CartItem $item): Model
+    {
+        $type = $item->seller_type;
+        if ($type !== null && $item->seller_id !== null && in_array($type, [Company::class, Distributor::class], true)) {
+            $seller = $type::query()->find((int) $item->seller_id);
+            if ($seller instanceof Model) {
+                return $seller;
+            }
+        }
+
+        return $this->sellerStock->defaultSeller($buyer, (int) $item->product_id);
+    }
+
+    /**
+     * @param  array<int, array{stock_point_id?: mixed, quantity?: mixed}>  $allocations
+     * @return list<int>
+     */
+    private function pointIds(array $allocations): array
+    {
+        return array_values(array_unique(array_filter(
+            array_map(fn (array $entry): int => (int) ($entry['stock_point_id'] ?? 0), $allocations),
+            fn (int $id): bool => $id > 0,
+        )));
     }
 
     /**

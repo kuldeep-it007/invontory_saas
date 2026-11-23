@@ -9,6 +9,7 @@ use App\Models\Category;
 use App\Models\Collection;
 use App\Models\Colour;
 use App\Support\CatalogOwner;
+use Closure;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 /**
@@ -27,9 +28,9 @@ class CatalogService
      *
      * @return LengthAwarePaginator<int, Category>
      */
-    public function paginateCategories(int $ownerKey = CatalogOwner::COMPANY, int $perPage = 25): LengthAwarePaginator
+    public function paginateCategories(?Closure $filter = null, int $perPage = 25): LengthAwarePaginator
     {
-        return Category::query()->ownedBy($ownerKey)->orderBy('name')->paginate($perPage);
+        return Category::query()->when($filter !== null, $filter)->orderBy('name')->paginate($perPage);
     }
 
     /**
@@ -37,9 +38,9 @@ class CatalogService
      *
      * @return LengthAwarePaginator<int, Collection>
      */
-    public function paginateCollections(int $ownerKey = CatalogOwner::COMPANY, int $perPage = 25): LengthAwarePaginator
+    public function paginateCollections(?Closure $filter = null, int $perPage = 25): LengthAwarePaginator
     {
-        return Collection::query()->ownedBy($ownerKey)->with('category')->orderBy('name')->paginate($perPage);
+        return Collection::query()->when($filter !== null, $filter)->with('category')->orderBy('name')->paginate($perPage);
     }
 
     /**
@@ -47,12 +48,12 @@ class CatalogService
      *
      * @return LengthAwarePaginator<int, Colour>
      */
-    public function paginateColours(int $ownerKey = CatalogOwner::COMPANY, int $perPage = 25): LengthAwarePaginator
+    public function paginateColours(?Closure $filter = null, int $perPage = 25): LengthAwarePaginator
     {
         // Eager-load the full chain Colour → Collection → Category so the
         // management UI can show which category/collection each colour sits
         // under without extra queries (R11.2).
-        return Colour::query()->ownedBy($ownerKey)->with('collection.category')->orderBy('name')->paginate($perPage);
+        return Colour::query()->when($filter !== null, $filter)->with('collection.category')->orderBy('name')->paginate($perPage);
     }
 
     /**

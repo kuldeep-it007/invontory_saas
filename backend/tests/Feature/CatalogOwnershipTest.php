@@ -125,12 +125,18 @@ describe('query-level isolation', function () {
         expect(Product::query()->count())->toBe(2);
     });
 
-    it('keeps the orderable catalogue to Company-owned products', function () {
+    it('shows a distributor the network catalogue without its own products', function () {
+        $southProduct = makeOwnedProduct($this->south, 'SKU-S');
+        $catalog = fn () => collect(app(CatalogVisibilityService::class)->paginateForAll()->items())->pluck('id')->sort()->values()->all();
+
         $this->actingAs($this->northUser);
+        expect($catalog())->toBe([$this->companyProduct->id, $southProduct->id]);
 
-        $ids = collect(app(CatalogVisibilityService::class)->paginateForAll()->items())->pluck('id')->all();
+        $this->actingAs($this->dealerUser);
+        expect($catalog())->toBe([$this->companyProduct->id, $this->northProduct->id, $southProduct->id]);
 
-        expect($ids)->toBe([$this->companyProduct->id]);
+        $this->actingAs($this->companyUser);
+        expect($catalog())->toBe([$this->companyProduct->id]);
     });
 });
 
@@ -153,10 +159,15 @@ describe('management rights', function () {
             ->and(Roles::abilitiesByRole()[Roles::DEALER])->not->toContain('catalog.manage');
     });
 
-    it('lists the caller\'s own rows for owner=mine and Company rows by default', function () {
-        expect(CatalogOwner::listKeyFor($this->northUser, 'mine'))->toBe($this->north)
-            ->and(CatalogOwner::listKeyFor($this->northUser, null))->toBe(CatalogOwner::COMPANY)
-            ->and(CatalogOwner::listKeyFor($this->companyUser, 'mine'))->toBe(CatalogOwner::COMPANY);
+    it('lists the caller\'s own rows for owner=mine', function () {
+        $this->actingAs($this->northUser);
+        $mine = Product::query()->tap(CatalogOwner::listFilter($this->northUser, 'mine'))->pluck('id')->all();
+
+        $this->actingAs($this->companyUser);
+        $companyMine = Product::query()->tap(CatalogOwner::listFilter($this->companyUser, 'mine'))->pluck('id')->all();
+
+        expect($mine)->toBe([$this->northProduct->id])
+            ->and($companyMine)->toBe([$this->companyProduct->id]);
     });
 });
 

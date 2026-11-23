@@ -62,7 +62,7 @@ class CatalogVisibilityService
      */
     public function paginateForAll(int $perPage = 25): LengthAwarePaginator
     {
-        return $this->withCatalog(Product::query()->ownedBy(CatalogOwner::COMPANY))->paginate($perPage);
+        return $this->withCatalog($this->networkQuery())->paginate($perPage);
     }
 
     /**
@@ -74,7 +74,22 @@ class CatalogVisibilityService
      */
     private function withCatalog(Builder $query): Builder
     {
-        return $query->with(['collection.category', 'colour'])->orderBy('sku');
+        return $query->with(['collection.category', 'colour', 'ownerDistributor:id,name'])->orderBy('sku');
+    }
+
+    /**
+     * The orderable network catalogue for the current user: Company products
+     * for the Company, everyone else's products for a distributor, all
+     * products for a dealer ({@see CatalogOwner::listFilter()}).
+     *
+     * @return Builder<Product>
+     */
+    private function networkQuery(): Builder
+    {
+        $query = Product::query();
+        (CatalogOwner::listFilter(CatalogOwner::currentUser(), null))($query);
+
+        return $query;
     }
 
     /**
@@ -90,9 +105,7 @@ class CatalogVisibilityService
     {
         $allowed = $this->allowedAttributeIds($buyer);
 
-        // Orderable catalogue = Company-owned products. Distributor-owned products
-        // become orderable with network ordering.
-        $query = Product::query()->ownedBy(CatalogOwner::COMPANY);
+        $query = $this->networkQuery();
 
         // Unconfigured Buyer: no restriction, the whole catalog is visible (R11.6).
         if ($allowed['total'] === 0) {

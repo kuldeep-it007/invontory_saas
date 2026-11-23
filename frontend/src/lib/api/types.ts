@@ -178,6 +178,9 @@ export interface Product {
   created_at: string | null;
   /** Server-resolved price for a general buyer (single best discount applied). */
   pricing?: ProductPricing | null;
+  /** Owning distributor; null = the Company owns the product. */
+  owner_distributor_id?: number | null;
+  owner_distributor?: { id: number; name: string } | null;
 }
 
 export interface ProductPricing {
@@ -343,6 +346,8 @@ export interface CartItem {
     category: string | null;
     colour: string | null;
   } | null;
+  /** Who sells this line; null on lines saved before sellers were recorded. */
+  seller: CartSeller | null;
   quantity: string;
   allocations: StockAllocation[] | null;
   rrp: string;
@@ -392,11 +397,34 @@ export interface SellerStockPoint {
   available: string;
 }
 
+/**
+ * One holder of a product's stock (the Company or a distributor) with its
+ * stock points. `orderable` says whether the current buyer may buy from it
+ * (null when no buyer is in context, e.g. the product list).
+ */
+export interface StockHolder {
+  holder_type: "company" | "distributor";
+  holder_id: number;
+  holder_name: string;
+  orderable: boolean | null;
+  points: SellerStockPoint[];
+}
+
 /** The seller's stock points for a product (for multi-point sourcing). */
 export interface SellerStockSourcing {
+  /** The buyer's default seller for this product. */
   seller_type: string;
   seller_id: number;
   points: SellerStockPoint[];
+  /** Every network holder of the product, default seller included. */
+  holders: StockHolder[];
+}
+
+/** Who sells a cart line. */
+export interface CartSeller {
+  type: "company" | "distributor";
+  id: number;
+  name: string;
 }
 
 /* ─── Party impersonation (R8.6) ──────────────────────────────────────────── */

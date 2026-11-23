@@ -517,6 +517,14 @@ export const useCartSourcing = (buyer: CartBuyer | null, productId: number | nul
     enabled: buyer !== null && productId !== null,
   });
 
+/** A product's stock across the network, grouped by holder (product list). */
+export const useProductStock = (productId: number | null) =>
+  useQuery({
+    queryKey: ["product-stock", productId],
+    queryFn: () => productApi.stock(productId as number),
+    enabled: productId !== null,
+  });
+
 /** A single order with its lines, product details and sourcing (order view). */
 export const useOrder = (id: number | null) =>
   useQuery({
