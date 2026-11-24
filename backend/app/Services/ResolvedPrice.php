@@ -25,10 +25,17 @@ final class ResolvedPrice
         public readonly float $markedUp,
         public readonly float $final,
         public readonly string $currency,
+        public readonly float $discountAmount = 0.0,
+        public readonly ?int $discountId = null,
+        /** dealer | distributor | product | general, or null when no discount applied. */
+        public readonly ?string $discountLevel = null,
+        /** percent | fixed, or null when no discount applied. */
+        public readonly ?string $discountType = null,
+        public readonly ?float $discountValue = null,
     ) {}
 
     /**
-     * @return array{base: float, marked_up: float, final: float, currency: string}
+     * @return array{base: float, marked_up: float, final: float, currency: string, discount: array{id: int|null, level: string, type: string, value: float|null, amount: float}|null}
      */
     public function toArray(): array
     {
@@ -37,6 +44,13 @@ final class ResolvedPrice
             'marked_up' => $this->markedUp,
             'final' => $this->final,
             'currency' => $this->currency,
+            'discount' => $this->discountLevel === null ? null : [
+                'id' => $this->discountId,
+                'level' => $this->discountLevel,
+                'type' => (string) $this->discountType,
+                'value' => $this->discountValue,
+                'amount' => round($this->discountAmount, 2),
+            ],
         ];
     }
 }

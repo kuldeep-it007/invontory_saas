@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Concerns\HasCatalogOwner;
 use App\Models\Concerns\TenantAuditable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -22,6 +23,7 @@ use OwenIt\Auditing\Contracts\Auditable;
  */
 class Product extends Model implements Auditable
 {
+    use HasCatalogOwner;
     use TenantAuditable;
 
     /**
@@ -29,6 +31,7 @@ class Product extends Model implements Auditable
      */
     protected $fillable = [
         'sku',
+        'hsn_code',
         'name',
         'price',
         'collection_id',

@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\CreditLimitExceededException;
+use App\Exceptions\IllegalOrderTransitionException;
+use App\Exceptions\InsufficientStockException;
 use App\Mail\OrderConfirmedMail;
 use App\Models\Company;
 use App\Models\Dealer;
 use App\Models\Distributor;
+use App\Models\Invoice;
 use App\Models\Notification;
 use App\Models\Order;
-use App\Models\OrderStatus;
 use App\Models\StockPoint;
 use App\Models\Tenant;
 use App\Services\Stock\StockMovement;
@@ -94,9 +97,9 @@ class OrderConfirmationService
      *                                                                                     credit service (R26.5).
      * @return Order The confirmed order (status Confirmed), freshly reloaded.
      *
-     * @throws \App\Exceptions\IllegalOrderTransitionException When `confirm` is illegal from the current state (422).
-     * @throws \App\Exceptions\InsufficientStockException      When a decrement would oversell with backorders off (422).
-     * @throws \App\Exceptions\CreditLimitExceededException    When projected outstanding exceeds the credit limit (422).
+     * @throws IllegalOrderTransitionException When `confirm` is illegal from the current state (422).
+     * @throws InsufficientStockException When a decrement would oversell with backorders off (422).
+     * @throws CreditLimitExceededException When projected outstanding exceeds the credit limit (422).
      */
     public function confirm(Order $order, array $context = []): Order
     {
@@ -119,6 +122,8 @@ class OrderConfirmationService
             // 1. Assert the confirm transition is legal BEFORE any side effect
             //    (R21.4). An illegal move throws a 422 and nothing is touched.
             $confirmedStatus = $this->stateMachine->assertTransition($order->status, 'confirm');
+            // A chain's Order 1 waits for its upstream orders (ChainOrderService).
+            app(ChainOrderService::class)->assertCanTransition($order, 'confirm');
 
             // 2. Build the seller decrement (+ buyer increment where held) for
             //    every order line (R16.1–R16.3).
@@ -150,6 +155,9 @@ class OrderConfirmationService
             $order->status = $confirmedStatus;
             $order->save();
         });
+
+        // An upstream chain order's stock has now moved: drop its reservation.
+        app(ChainOrderService::class)->afterConfirmed($order);
 
         // After commit: invalidate the tenant's cached report aggregates — a
         // confirmation moves stock and appends an invoice + account-ledger entry
@@ -370,7 +378,7 @@ class OrderConfirmationService
             return;
         }
 
-        $invoiceNumber = (int) \App\Models\Invoice::query()
+        $invoiceNumber = (int) Invoice::query()
             ->where('order_id', (int) $order->getKey())
             ->value('number');
 
@@ -405,7 +413,7 @@ class OrderConfirmationService
             return;
         }
 
-        $invoiceNumber = (int) \App\Models\Invoice::query()
+        $invoiceNumber = (int) Invoice::query()
             ->where('order_id', (int) $order->getKey())
             ->value('number');
 

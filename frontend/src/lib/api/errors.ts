@@ -5,7 +5,10 @@ export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     // Surface the first field error when the backend returned validation details.
     if (err.details && typeof err.details === "object") {
-      const first = Object.values(err.details)[0];
+      // Validation errors live in `details.fields` (or a bare field map); other details (e.g. debug `exception`) are not user messages.
+      const d = err.details as Record<string, unknown>;
+      const fields = d.fields && typeof d.fields === "object" ? (d.fields as Record<string, unknown>) : d;
+      const first = Object.values(fields).find((v) => Array.isArray(v) && typeof v[0] === "string");
       if (Array.isArray(first) && typeof first[0] === "string") return first[0];
       if (typeof first === "string") return first;
     }

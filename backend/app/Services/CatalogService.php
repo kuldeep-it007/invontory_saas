@@ -4,16 +4,19 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Http\Controllers\CatalogController;
 use App\Models\Category;
 use App\Models\Collection;
 use App\Models\Colour;
+use App\Support\CatalogOwner;
+use Closure;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 /**
  * Catalog hierarchy management: Category → Collection → Colour (R11.2).
  *
  * Focused single-responsibility service the thin
- * {@see \App\Http\Controllers\CatalogController} delegates to. The hierarchy
+ * {@see CatalogController} delegates to. The hierarchy
  * is NOT quota-counted (only products are, via {@see ProductService}); this
  * service simply manages the structural levels and exposes paginated,
  * eager-loaded listings for the catalog management UI.
@@ -25,9 +28,9 @@ class CatalogService
      *
      * @return LengthAwarePaginator<int, Category>
      */
-    public function paginateCategories(int $perPage = 25): LengthAwarePaginator
+    public function paginateCategories(?Closure $filter = null, int $perPage = 25): LengthAwarePaginator
     {
-        return Category::query()->orderBy('name')->paginate($perPage);
+        return Category::query()->when($filter !== null, $filter)->orderBy('name')->paginate($perPage);
     }
 
     /**
@@ -35,9 +38,9 @@ class CatalogService
      *
      * @return LengthAwarePaginator<int, Collection>
      */
-    public function paginateCollections(int $perPage = 25): LengthAwarePaginator
+    public function paginateCollections(?Closure $filter = null, int $perPage = 25): LengthAwarePaginator
     {
-        return Collection::query()->with('category')->orderBy('name')->paginate($perPage);
+        return Collection::query()->when($filter !== null, $filter)->with('category')->orderBy('name')->paginate($perPage);
     }
 
     /**
@@ -45,12 +48,12 @@ class CatalogService
      *
      * @return LengthAwarePaginator<int, Colour>
      */
-    public function paginateColours(int $perPage = 25): LengthAwarePaginator
+    public function paginateColours(?Closure $filter = null, int $perPage = 25): LengthAwarePaginator
     {
         // Eager-load the full chain Colour → Collection → Category so the
         // management UI can show which category/collection each colour sits
         // under without extra queries (R11.2).
-        return Colour::query()->with('collection.category')->orderBy('name')->paginate($perPage);
+        return Colour::query()->when($filter !== null, $filter)->with('collection.category')->orderBy('name')->paginate($perPage);
     }
 
     /**
@@ -59,11 +62,11 @@ class CatalogService
      *
      * @param  array{code?: string|null, name: string, active?: bool}  $attributes
      */
-    public function createCategory(array $attributes): Category
+    public function createCategory(array $attributes, ?int $ownerDistributorId = null): Category
     {
-        $attributes['code'] = $this->resolveCode(Category::class, $attributes);
+        $attributes['code'] = $this->resolveCode(Category::class, $attributes, $ownerDistributorId);
 
-        return Category::create($attributes);
+        return $this->createOwned(new Category, $attributes, $ownerDistributorId);
     }
 
     /**
@@ -71,11 +74,11 @@ class CatalogService
      *
      * @param  array{category_id: int, code?: string|null, name: string, active?: bool}  $attributes
      */
-    public function createCollection(array $attributes): Collection
+    public function createCollection(array $attributes, ?int $ownerDistributorId = null): Collection
     {
-        $attributes['code'] = $this->resolveCode(Collection::class, $attributes);
+        $attributes['code'] = $this->resolveCode(Collection::class, $attributes, $ownerDistributorId);
 
-        return Collection::create($attributes);
+        return $this->createOwned(new Collection, $attributes, $ownerDistributorId);
     }
 
     /**
@@ -83,17 +86,35 @@ class CatalogService
      *
      * @param  array{collection_id: int, code?: string|null, name: string, active?: bool}  $attributes
      */
-    public function createColour(array $attributes): Colour
+    public function createColour(array $attributes, ?int $ownerDistributorId = null): Colour
     {
-        $attributes['code'] = $this->resolveCode(Colour::class, $attributes);
+        $attributes['code'] = $this->resolveCode(Colour::class, $attributes, $ownerDistributorId);
 
-        return Colour::create($attributes);
+        return $this->createOwned(new Colour, $attributes, $ownerDistributorId);
+    }
+
+    /**
+     * Persist a catalogue row for its owner (null = Company). The owner is set
+     * explicitly because it is not mass-assignable.
+     *
+     * @template TModel of Category|Collection|Colour
+     *
+     * @param  TModel  $model
+     * @param  array<string, mixed>  $attributes
+     * @return TModel
+     */
+    private function createOwned(Category|Collection|Colour $model, array $attributes, ?int $ownerDistributorId): Category|Collection|Colour
+    {
+        $model->fill($attributes);
+        $model->owner_distributor_id = $ownerDistributorId;
+        $model->save();
+
+        return $model;
     }
 
     /**
      * Update a catalog level (rename, change code, activate/deactivate).
      *
-     * @param  Category|Collection|Colour  $model
      * @param  array<string, mixed>  $attributes
      */
     public function updateAttribute(Category|Collection|Colour $model, array $attributes): Category|Collection|Colour
@@ -117,7 +138,7 @@ class CatalogService
      * @param  class-string<Category|Collection|Colour>  $modelClass
      * @param  array<string, mixed>  $attributes
      */
-    private function resolveCode(string $modelClass, array $attributes): string
+    private function resolveCode(string $modelClass, array $attributes, ?int $ownerDistributorId = null): string
     {
         $supplied = isset($attributes['code']) ? trim((string) $attributes['code']) : '';
         $base = $supplied !== ''
@@ -127,7 +148,7 @@ class CatalogService
 
         $code = $base;
         $i = 1;
-        while ($modelClass::query()->where('code', $code)->exists()) {
+        while ($modelClass::query()->withoutGlobalScopes()->ownedBy($ownerDistributorId ?? CatalogOwner::COMPANY)->where('code', $code)->exists()) {
             $code = $base.'-'.(++$i);
         }
 

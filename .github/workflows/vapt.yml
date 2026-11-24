@@ -1,5 +1,6 @@
 # Automated VAPT on every build, gated deployment, post-deploy testing, report.
 #
+#   quality (every push / PR)  tests, config, migrations, security tests -> blocks deploy on any failure
 #   scan    (every push / PR / manual run)  secrets, dependencies, SAST, container
 #           images and configuration -> gate: blocks on unexcepted CRITICAL/HIGH
 #   deploy  (main only, gate passed)        SSH to the server: deploy.sh update
@@ -127,9 +128,58 @@ jobs:
             out/pre/
           retention-days: 90
 
+  quality:
+    name: Quality gate (tests, config, migrations, security)
+    # Always runs (PRs and main), independent of the VAPT switch. The deploy job needs it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-pw
+          MYSQL_DATABASE: inventory_central
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-pw --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          extensions: bcmath, gd, zip, pdo_mysql, pdo_sqlite, mbstring, pcntl, intl
+          tools: composer:v2
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: |
+          composer install --working-dir=backend --no-interaction --prefer-dist --no-progress
+          npm ci --prefix frontend --no-audit --no-fund
+      - name: Run the quality gate (every mandatory check must pass)
+        env:
+          GATE_MYSQL_HOST: 127.0.0.1
+          GATE_MYSQL_PASSWORD: ci-root-pw
+          # Flip the repository variable to 'true' once the MySQL-backed suite is green.
+          GATE_MYSQL_MANDATORY: ${{ vars.GATE_MYSQL_MANDATORY || 'false' }}
+        run: python3 deploy/gate/deployctl.py gate --mode ci --src . --out out/gate --commit "$GITHUB_SHA"
+      - name: Job summary
+        if: always()
+        run: '[ -f out/gate/gate-report.md ] && cat out/gate/gate-report.md >> "$GITHUB_STEP_SUMMARY" || true'
+      - name: Keep the test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-gate-report
+          path: out/gate/
+          retention-days: 90
   deploy:
     name: Deploy (deploy.sh update)
-    needs: scan
+    needs: [scan, quality]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45

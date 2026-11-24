@@ -112,16 +112,21 @@ class CartController extends Controller
     }
 
     /**
-     * POST /api/cart/submit — turn the cart into an Order (R20.4).
+     * POST /api/cart/submit — turn the cart into Orders (R20.4): one per
+     * seller. `data` is the first order (single-seller carts make exactly
+     * one); `orders` lists all of them.
      */
     public function submit(SubmitCartViaCartRequest $request): JsonResponse
     {
         $data = $request->validated();
         $buyer = $this->resolveBuyer($data);
 
-        $order = $this->cart->submit($buyer, $data['order_type'] ?? 'standard');
+        $orders = array_map(
+            fn ($order) => $order->load('lines'),
+            $this->cart->submitAll($buyer, $data['order_type'] ?? 'standard'),
+        );
 
-        return response()->json(['data' => $order->load('lines')], 201);
+        return response()->json(['data' => $orders[0], 'orders' => $orders], 201);
     }
 
     /**
@@ -147,6 +152,17 @@ class CartController extends Controller
                         'category' => $item->product->collection?->category?->name,
                         'colour' => $item->product->colour?->name,
                     ] : null,
+                    'seller' => $item->seller === null ? null : [
+                        'type' => $this->sellerStock->shortType($item->seller),
+                        'id' => (int) $item->seller->getKey(),
+                        'name' => (string) ($item->seller->getAttribute('name') ?? ''),
+                    ],
+                    // The holder the distributor buys this line from (chain order).
+                    'source' => $item->source === null ? null : [
+                        'type' => $this->sellerStock->shortType($item->source),
+                        'id' => (int) $item->source->getKey(),
+                        'name' => (string) ($item->source->getAttribute('name') ?? ''),
+                    ],
                     'quantity' => $item->quantity,
                     'allocations' => $item->allocations ?? null,
                     'rrp' => $item->rrp,

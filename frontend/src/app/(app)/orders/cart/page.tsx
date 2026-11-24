@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { useAlerts } from "@/components/providers/alerts-provider";
+import { StockHoldersTable } from "@/components/stock/stock-holders-table";
 import { useImpersonation, useEffectiveAuth } from "@/components/providers/impersonation-provider";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/form";
@@ -103,7 +104,7 @@ function CartPanel({ buyer }: { buyer: CartBuyer }): JSX.Element {
   const { data, isLoading, error } = useCart(buyer);
   const { remove, update, clear, submit } = useCartMutations(buyer);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [placed, setPlaced] = useState<number | null>(null);
+  const [placed, setPlaced] = useState<string | null>(null);
 
   const cart = data?.data;
   const items = cart?.items ?? [];
@@ -143,10 +144,12 @@ function CartPanel({ buyer }: { buyer: CartBuyer }): JSX.Element {
     setPlaced(null);
     try {
       const res = await submit.mutateAsync(undefined);
-      setPlaced(res.data.id);
+      // One order per seller: a cart from several sellers places several orders.
+      const ids = (res.orders ?? [res.data]).map((o) => `#${o.id}`).join(", ");
+      setPlaced(ids);
       toast({
-        title: "Order placed",
-        message: `Order #${res.data.id} was created successfully.`,
+        title: (res.orders?.length ?? 1) > 1 ? "Orders placed" : "Order placed",
+        message: `Order ${ids} created successfully.`,
         tone: "success",
       });
     } catch (err) {
@@ -215,7 +218,7 @@ function CartPanel({ buyer }: { buyer: CartBuyer }): JSX.Element {
       ) : null}
       {placed ? (
         <p className="rounded-lg bg-success/10 px-3 py-2 text-sm text-success" role="status">
-          Order #{placed} placed.
+          Order {placed} placed.
         </p>
       ) : null}
 
@@ -272,6 +275,12 @@ function CartLine({
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
           <p className="text-xs text-muted-foreground">{item.product?.sku ?? ""}</p>
+          {item.seller ? (
+            <p className="text-xs text-muted-foreground">
+              Seller: {item.seller.name}
+              {item.source ? ` · supplied by ${item.source.name} (linked purchase order)` : ""}
+            </p>
+          ) : null}
         </div>
         <button
           onClick={onRemove}
@@ -352,7 +361,12 @@ function AllocationEditor({
 
   const [alloc, setAlloc] = useState<Record<number, string>>(initial);
 
-  const points = data?.data.points ?? [];
+  // The line's own seller's points (another distributor for a
+  // distributor-to-distributor line), else the default seller's.
+  const sellerGroup = item.seller
+    ? data?.data.holders?.find((h) => h.holder_type === item.seller?.type && h.holder_id === item.seller?.id)
+    : undefined;
+  const points = sellerGroup?.points ?? data?.data.points ?? [];
   const allocated = Object.values(alloc).reduce((s, v) => s + (Number(v) || 0), 0);
   const remaining = Math.round((lineQty - allocated) * 1000) / 1000;
   const balanced = Math.abs(remaining) < 0.0005 && allocated > 0;
@@ -598,7 +612,12 @@ function ProductRow({
     <>
       <tr className="border-t border-border/70 hover:bg-accent/50">
         <td className="px-3 py-2 font-mono text-xs">{product.sku}</td>
-        <td className="px-3 py-2 font-medium text-foreground">{product.name}</td>
+        <td className="px-3 py-2">
+          <span className="font-medium text-foreground">{product.name}</span>
+          <span className="block text-xs text-muted-foreground">
+            {product.owner_distributor?.name ?? "Company"}
+          </span>
+        </td>
         <td className="px-3 py-2 text-muted-foreground">{product.tax_type ?? "—"}</td>
         <td className="px-3 py-2">
           <input
@@ -661,7 +680,6 @@ function AvailableStockTable({
   onSelect: (stockPointId: number) => void;
 }): JSX.Element {
   const { data, isLoading, error } = useCartSourcing(buyer, productId);
-  const points = data?.data.points ?? [];
 
   return (
     <div className="space-y-2">
@@ -670,43 +688,14 @@ function AvailableStockTable({
         <p className="text-xs text-muted-foreground">Loading stock points…</p>
       ) : error ? (
         <p className="text-xs text-danger">{errorMessage(error)}</p>
-      ) : points.length === 0 ? (
-        <p className="text-xs text-muted-foreground">The seller has no stock points for this product.</p>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border bg-card">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-muted/60">
-              <tr>
-                <th className="px-3 py-2 text-xs font-semibold text-foreground">Stock point</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-foreground">Stock</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-foreground">Blocked</th>
-                <th className="w-24 px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {points.map((p) => (
-                <tr key={p.stock_point_id} className="border-t border-border/60">
-                  <td className="px-3 py-2 text-foreground">{p.name}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-foreground">
-                    {trimQty(p.available)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                    {trimQty(p.reserved)}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <Button
-                      size="sm"
-                      disabled={disabled || Number(p.available) <= 0}
-                      onClick={() => onSelect(p.stock_point_id)}
-                    >
-                      Select
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        // Every holder of the product is its own block of stock points;
+        // selecting a point makes its holder the seller of the line.
+        <StockHoldersTable
+          holders={data?.data.holders ?? []}
+          disabled={disabled}
+          onSelect={(_, stockPointId) => onSelect(stockPointId)}
+        />
       )}
     </div>
   );

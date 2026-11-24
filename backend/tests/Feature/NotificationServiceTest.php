@@ -6,6 +6,7 @@ use App\Models\Notification;
 use App\Models\Tenant;
 use App\Services\NotificationService;
 use App\Services\SubscriptionGateService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -210,7 +211,7 @@ it('cannot mark another user\'s notification read (per-user scope, R27.6)', func
             $other = $service->notify(2, Notification::TYPE_ORDER_PLACED, 'Not yours');
 
             expect(fn () => $service->markRead(1, (int) $other->getKey()))
-                ->toThrow(Illuminate\Database\Eloquent\ModelNotFoundException::class);
+                ->toThrow(ModelNotFoundException::class);
 
             // The other user's notification is still unread.
             expect($service->unreadCount(2))->toBe(1);
@@ -230,13 +231,15 @@ it('fires optional SMS/WhatsApp channels only where the whatsapp_notifications f
             config()->set('services.notifications.whatsapp.driver', 'log');
 
             // Flag OFF: no optional-channel log entries, in-app row still written.
-            Log::shouldReceive('info')
-                ->with('notification.optional_channel', Mockery::any())
-                ->never();
+            // A spy (not a strict mock) so the audit trail's archive-channel
+            // logging still works; the archive channel returns the same spy.
+            Log::spy();
+            Log::shouldReceive('channel')->andReturnSelf();
 
             $disabled = makeNotificationService(optionalChannelsEnabled: false);
             $disabled->notify(1, Notification::TYPE_ORDER_PLACED, 'Order placed', null, [], '+15551234567');
 
+            Log::shouldNotHaveReceived('info', ['notification.optional_channel', Mockery::any()]);
             expect(Notification::where('user_id', 1)->count())->toBe(1);
         });
     } finally {
@@ -255,15 +258,18 @@ it('logs the SMS and WhatsApp channels when the flag is enabled and a phone is g
 
             // Flag ON + phone present: both channels record a log no-op (graceful
             // degradation with no gateway configured — R27.5).
-            Log::shouldReceive('info')
+            Log::spy();
+            Log::shouldReceive('channel')->andReturnSelf();
+
+            $enabled = makeNotificationService(optionalChannelsEnabled: true);
+            $enabled->notify(1, Notification::TYPE_ORDER_CONFIRMED, 'Order confirmed', 'Invoice issued.', [], '+15551234567');
+
+            Log::shouldHaveReceived('info')
                 ->with('notification.optional_channel', Mockery::on(
                     fn ($ctx) => in_array($ctx['channel'] ?? null, ['sms', 'whatsapp'], true)
                         && ($ctx['to'] ?? null) === '+15551234567',
                 ))
                 ->twice();
-
-            $enabled = makeNotificationService(optionalChannelsEnabled: true);
-            $enabled->notify(1, Notification::TYPE_ORDER_CONFIRMED, 'Order confirmed', 'Invoice issued.', [], '+15551234567');
 
             expect(Notification::where('user_id', 1)->count())->toBe(1);
         });

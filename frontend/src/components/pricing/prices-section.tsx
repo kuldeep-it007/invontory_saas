@@ -22,8 +22,8 @@ export function PricesSection({ canManage }: { canManage: boolean }): JSX.Elemen
   const { remove } = usePriceMutations();
   // Resolve friendly names for a price's referenced product/collection so the
   // table shows "Name (#id)" instead of a bare id.
-  const products = useProducts(1);
-  const collections = useCollections();
+  const products = useProducts(1, "mine");
+  const collections = useCollections("mine");
   const [actionError, setActionError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
@@ -116,8 +116,8 @@ export function PricesSection({ canManage }: { canManage: boolean }): JSX.Elemen
 
 function PriceModal({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
   const { create } = usePriceMutations();
-  const collections = useCollections();
-  const products = useProducts(1);
+  const collections = useCollections("mine");
+  const products = useProducts(1, "mine");
 
   const [level, setLevel] = useState<"product" | "collection">("collection");
   const [refId, setRefId] = useState("");

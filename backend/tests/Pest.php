@@ -1,6 +1,9 @@
 <?php
 
 declare(strict_types=1);
+use Illuminate\Support\Facades\DB;
+use Tests\Property\PropertyTestCase;
+use Tests\TestCase;
 
 /*
 |--------------------------------------------------------------------------
@@ -13,14 +16,14 @@ declare(strict_types=1);
 |
 */
 
-uses(Tests\TestCase::class)->in('Feature', 'Smoke');
+uses(TestCase::class)->in('Feature', 'Smoke', 'Security');
 
 /*
 | Property-based tests (innmind/black-box) bind to a dedicated base case that
 | mixes the BlackBox trait onto the framework TestCase, so proofs can drive the
 | booted application (DB connections, tenancy) and call `static::forAll()`.
 */
-uses(Tests\Property\PropertyTestCase::class)->in('Property');
+uses(PropertyTestCase::class)->in('Property');
 
 /*
 |--------------------------------------------------------------------------
@@ -48,10 +51,10 @@ function mysql_reachable(string $connection = 'central'): bool
     }
 
     try {
-        \Illuminate\Support\Facades\DB::connection($connection)->select('SELECT 1');
+        DB::connection($connection)->select('SELECT 1');
 
         return true;
-    } catch (\Throwable $e) {
+    } catch (Throwable $e) {
         return false;
     }
 }

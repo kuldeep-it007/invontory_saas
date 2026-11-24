@@ -13,6 +13,7 @@ use App\Models\OrderLine;
 use App\Models\OrderStatus;
 use App\Models\Stock;
 use App\Models\Tenant;
+use App\Models\User;
 use App\Services\Stock\StockMovement;
 use App\Services\StockMovementService;
 use Illuminate\Http\Request;
@@ -103,6 +104,17 @@ function seedConfirmEndpointProduct(string $sku = 'SKU-CE'): int
 }
 
 /**
+ * A confirm request made by a Company-side user (no distributor/dealer link),
+ * i.e. the seller of a distributor order, as the lifecycle authorizer requires.
+ */
+function companyConfirmRequest(Order $order): Request
+{
+    $request = Request::create('/api/orders/'.$order->getKey().'/confirm', 'POST');
+    $request->setUserResolver(fn () => (new User)->forceFill(['id' => 1, 'name' => 'Admin', 'email' => 'admin@example.test']));
+
+    return $request;
+}
+/**
  * @param  array<int, Tenant>  $registry
  */
 function teardownConfirmEndpointTenants(array $registry): void
@@ -156,7 +168,7 @@ it('confirm endpoint returns the confirmed order with its invoice and queues the
             ]);
 
             $controller = app(OrderConfirmationController::class);
-            $response = $controller->store(Request::create('/api/orders/'.$order->getKey().'/confirm', 'POST'), $order);
+            $response = $controller->store(companyConfirmRequest($order), $order);
 
             expect($response->getStatusCode())->toBe(200);
 
@@ -210,7 +222,7 @@ it('confirm endpoint bubbles the service 422 on an illegal confirm and changes n
 
             $threw = null;
             try {
-                $controller->store(Request::create('/api/orders/'.$order->getKey().'/confirm', 'POST'), $order);
+                $controller->store(companyConfirmRequest($order), $order);
             } catch (IllegalOrderTransitionException $e) {
                 $threw = $e;
             }

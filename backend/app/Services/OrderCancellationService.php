@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\IllegalOrderTransitionException;
 use App\Models\Order;
 use App\Models\StockLedger;
 use App\Services\Stock\StockMovement;
@@ -71,7 +72,7 @@ class OrderCancellationService
      *                                               and account-ledger entry (R15.1).
      * @return Order The cancelled order (status Cancelled), freshly reloaded.
      *
-     * @throws \App\Exceptions\IllegalOrderTransitionException When `cancel` is illegal from the current state (422).
+     * @throws IllegalOrderTransitionException When `cancel` is illegal from the current state (422).
      */
     public function cancel(Order $order, array $context = []): Order
     {
@@ -114,6 +115,9 @@ class OrderCancellationService
             $order->status = $cancelledStatus;
             $order->save();
         });
+
+        // Cancel the upstream chain orders that are not dispatched yet.
+        app(ChainOrderService::class)->cascadeCancel($order);
 
         // After commit: invalidate the tenant's cached report aggregates — the
         // cancellation restored stock and reversed the account, changing

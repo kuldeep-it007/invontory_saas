@@ -33,7 +33,7 @@ export function setAdminToken(token: string | null): void {
 
 async function adminRequest<T>(
   path: string,
-  options: { method?: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown; auth?: boolean; form?: FormData } = {},
+  options: { method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; body?: unknown; auth?: boolean; form?: FormData } = {},
 ): Promise<T> {
   const { method = "GET", body, auth = true, form } = options;
   const hasBody = body !== undefined && body !== null;
@@ -320,6 +320,62 @@ export interface AdminDomain {
   last_error: string | null;
 }
 
+/* ─── Monitoring ──────────────────────────────────────────────────────────── */
+export interface MonitorSample {
+  ts: number;
+  cpu_pct: number | null; load1: number; load5: number; load15: number; load_per_core: number;
+  mem_pct: number; mem_used: number; swap_pct: number; disk_pct: number | null;
+  net_rx_bps: number; net_tx_bps: number; net_latency_ms: number | null;
+  api_ms: number | null; api_up: boolean; frontend_up: boolean;
+  req: number; s2xx: number; s3xx: number; s4xx: number; s5xx: number; err5xx_pct: number;
+  req_p50_ms: number | null; req_p95_ms: number | null;
+  db_up: boolean; db_conn: number | null; db_running: number | null; db_conn_pct: number | null;
+  db_qps: number | null; db_slow: number; queue_depth: number | null; ssl_days_left: number | null;
+}
+export interface MonitorServiceState { up: boolean; status: string; ports: string }
+export interface MonitorSnapshot {
+  updated: string;
+  sample: MonitorSample;
+  server: {
+    uptime_s: number; load: number[]; cpu_cores: number;
+    memory: { mem_total: number; mem_used: number; mem_avail: number; mem_pct: number; swap_total: number; swap_used: number; swap_pct: number };
+    disks: { mount: string; device: string; fs: string; total: number; used: number; free: number; pct: number }[];
+    processes: { pid: number; name: string; cpu_pct: number; rss: number }[];
+    net: { rx_bps: number; tx_bps: number; latency_ms: number | null };
+  };
+  application: {
+    api: { up: boolean; ms: number | null; code: number | null };
+    frontend: { up: boolean; ms: number | null };
+    database: Record<string, number | string | boolean>;
+    queue: { up: boolean; depth: number | null; delayed?: number; memory?: string };
+    services: Record<string, MonitorServiceState>;
+    http: { nginx_log_available: boolean };
+  };
+  infrastructure: {
+    os?: string; kernel?: string; arch?: string; hostname?: string; cpu_cores?: number; cpu_model?: string;
+    docker?: string; compose?: string; nginx?: string; nginx_config_ok?: boolean; php?: string; laravel?: string; node?: string; python?: string;
+    ssl?: { available: boolean; domain?: string; expires?: string; days_left?: number; issuer?: string };
+    ports?: { port: number; scope: "public" | "loopback" }[];
+    env_checks?: { check: string; ok: boolean }[];
+  };
+}
+export interface MonitorAlert { key: string; severity: "warning" | "critical"; message: string; since?: string; event?: string; ts?: string }
+export interface DeploymentRecord {
+  id: string; status: "running" | "success" | "blocked" | "failed" | "rolled_back"; stage: string; commit: string; prev_commit: string;
+  branch: string; trigger: string; actor: string; subject?: string; started_at: string; completed_at: string | null; duration_s: number | null; reason: string;
+  gate: { verdict: string; passed: number; failed: number; skipped: number; total: number; blocking: string[]; duration_s: number } | null;
+  rollback: { performed: boolean; to_commit?: string; at?: string; reason?: string };
+}
+export interface GateCheck {
+  name: string; category: string; mandatory: boolean; status: "passed" | "failed" | "skipped"; detail: string; duration_s: number;
+  tests: { passed: number; failed: number; skipped: number; total: number } | null; failures: string[];
+}
+export interface GateReport {
+  verdict: "pass" | "fail"; totals: { passed: number; failed: number; skipped: number; total: number }; blocking: string[];
+  categories: Record<string, { passed: number; failed: number; skipped: number; total: number }>; checks: GateCheck[]; duration_s: number; mode: string;
+}
+export interface ThresholdRow { label: string; warning: number; critical: number; lower_is_worse: boolean; max: number }
+export type MonitorRange = "1h" | "6h" | "24h" | "7d" | "30d";
 export const adminApi = {
   /** Central (Platform_Admin) login — issues a token for /api/admin/*. */
   login: (login: string, password: string) =>
@@ -427,4 +483,17 @@ export const adminApi = {
     adminRequest<{ data: AdminDomain }>(`/admin/domains/${id}/renew-ssl`, { method: "POST" }),
   enableDomain: (id: number) =>
     adminRequest<{ data: AdminDomain }>(`/admin/domains/${id}/enable`, { method: "POST" }),
-};
+  /* Monitoring (data written by the host agent) */
+  monitoringOverview: () =>
+    adminRequest<{ data: { current: { available: boolean; stale: boolean; age_s: number | null; data: MonitorSnapshot | null }; alerts: { active: MonitorAlert[]; history: MonitorAlert[] }; latest_deployment: DeploymentRecord | null } }>("/admin/monitoring/overview"),
+  monitoringMetrics: (range: MonitorRange) =>
+    adminRequest<{ data: { range: MonitorRange; resolution: string; points: MonitorSample[] } }>(`/admin/monitoring/metrics?range=${range}`),
+  monitoringErrors: () =>
+    adminRequest<{ data: { time: string; level: string; message: string }[] }>("/admin/monitoring/errors"),
+  monitoringThresholds: () => adminRequest<{ data: Record<string, ThresholdRow> }>("/admin/monitoring/thresholds"),
+  saveMonitoringThresholds: (thresholds: Record<string, { warning: number; critical: number }>) =>
+    adminRequest<{ data: Record<string, ThresholdRow> }>("/admin/monitoring/thresholds", { method: "PUT", body: { thresholds } }),
+  monitoringDeployments: () =>
+    adminRequest<{ data: { deployments: DeploymentRecord[]; rollbacks: DeploymentRecord[]; last_successful: DeploymentRecord[] } }>("/admin/monitoring/deployments"),
+  monitoringDeployment: (id: string) =>
+    adminRequest<{ data: { record: DeploymentRecord; gate: GateReport | null; deploy_log: string[]; gate_log: string[] } }>(`/admin/monitoring/deployments/${id}`),};

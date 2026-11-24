@@ -138,7 +138,11 @@ final class Roles
             // seller-ownership check in OrderLifecycleAuthorizer confines
             // `orders.confirm`/`orders.cancel` to orders this distributor sells,
             // so it can never touch Company-stock orders.
+            // `catalog.manage` lets a Distributor run ITS OWN catalogue
+            // (categories, collections, colours, products, prices, discounts);
+            // CatalogOwner confines every write to rows it owns.
             self::DISTRIBUTOR => array_values(array_merge($view, [
+                'catalog.manage',
                 'orders.create',
                 'orders.confirm',
                 'orders.cancel',

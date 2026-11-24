@@ -168,12 +168,34 @@ export interface Product {
   name: string;
   /** Base selling amount maintained with the product (R11.3); null if unset. */
   price: string | number | null;
+  /** HSN code (4, 6 or 8 digits); null only on legacy products. */
+  hsn_code: string | null;
   tax_type: string | null;
   uom: string | null;
   category_id: number | null;
   collection_id: number | null;
   colour_id: number | null;
   created_at: string | null;
+  /** Server-resolved price for a general buyer (single best discount applied). */
+  pricing?: ProductPricing | null;
+  /** Owning distributor; null = the Company owns the product. */
+  owner_distributor_id?: number | null;
+  owner_distributor?: { id: number; name: string } | null;
+}
+
+export interface ProductPricing {
+  /** Base price after markup, as a decimal string. */
+  base_price: string;
+  /** Price after the single applicable discount, as a decimal string. */
+  final_price: string;
+  currency: string;
+  discount: {
+    id: number | null;
+    level: "dealer" | "distributor" | "product" | "general";
+    type: "percent" | "fixed";
+    value: number | null;
+    amount: number;
+  } | null;
 }
 
 export interface CatalogAttribute {
@@ -218,9 +240,13 @@ export interface Discount {
   id: number;
   type: "customer" | "online";
   customer_type: string | null;
+  /** `percent` uses `percentage`; `fixed` uses `amount` (currency off per unit). */
+  value_type: "percent" | "fixed";
   percentage: string | number;
+  amount: string | number | null;
   buyer_type: string | null;
   buyer_id: number | null;
+  product_id: number | null;
   category_id: number | null;
   collection_id: number | null;
   colour_id: number | null;
@@ -290,8 +316,16 @@ export interface OrderLineRow {
 
 export interface Order {
   id: number;
-  /** Unique, ≥8-digit human-facing order number (R20). */
+  /** Unique human-facing order number: SO-… (dealer order), PO-… (distributor order). */
   order_number?: string | null;
+  /** Shared reference of the orders in one chain (Order 1 + its upstream orders). */
+  chain_ref?: string | null;
+  /** The Order 1 this upstream order supplies. */
+  parent_order_id?: number | null;
+  /** Other orders of the chain the viewer is a party to (detail view only). */
+  chain_orders?: ChainOrderLink[];
+  /** Lines hidden from this viewer (the Company sees only its own products). */
+  lines_hidden?: number;
   status: string;
   order_type: string | null;
   total: string | number;
@@ -304,6 +338,16 @@ export interface Order {
   buyer?: OrderParty | null;
   seller?: OrderParty | null;
   lines?: OrderLineRow[];
+}
+
+/** Another order of the same chain. `purchase` = an upstream (PO) leg. */
+export interface ChainOrderLink {
+  id: number;
+  order_number: string | null;
+  status: string;
+  buyer: string;
+  seller: string;
+  role: "sales" | "purchase";
 }
 
 /* ─── Shopping cart (R20.3) ───────────────────────────────────────────────── */
@@ -320,6 +364,10 @@ export interface CartItem {
     category: string | null;
     colour: string | null;
   } | null;
+  /** Who sells this line; null on lines saved before sellers were recorded. */
+  seller: CartSeller | null;
+  /** The holder the distributor buys this line from (chain order), if picked. */
+  source?: CartSeller | null;
   quantity: string;
   allocations: StockAllocation[] | null;
   rrp: string;
@@ -369,11 +417,34 @@ export interface SellerStockPoint {
   available: string;
 }
 
+/**
+ * One holder of a product's stock (the Company or a distributor) with its
+ * stock points. `orderable` says whether the current buyer may buy from it
+ * (null when no buyer is in context, e.g. the product list).
+ */
+export interface StockHolder {
+  holder_type: "company" | "distributor";
+  holder_id: number;
+  holder_name: string;
+  orderable: boolean | null;
+  points: SellerStockPoint[];
+}
+
 /** The seller's stock points for a product (for multi-point sourcing). */
 export interface SellerStockSourcing {
+  /** The buyer's default seller for this product. */
   seller_type: string;
   seller_id: number;
   points: SellerStockPoint[];
+  /** Every network holder of the product, default seller included. */
+  holders: StockHolder[];
+}
+
+/** Who sells a cart line. */
+export interface CartSeller {
+  type: "company" | "distributor";
+  id: number;
+  name: string;
 }
 
 /* ─── Party impersonation (R8.6) ──────────────────────────────────────────── */

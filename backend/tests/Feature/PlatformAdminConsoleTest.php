@@ -24,6 +24,13 @@ use Spatie\Permission\Models\Role;
 
 beforeEach(function () {
     skip_without_mysql('central');
+    // Central users have no tenant audit table; production writes them with
+    // the query builder for the same reason (PlatformAdminController).
+    User::disableAuditing();
+});
+
+afterEach(function () {
+    User::enableAuditing();
 });
 
 /** Central Platform_Admin acting through Sanctum. */

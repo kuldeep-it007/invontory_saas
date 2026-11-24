@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\DB;
 |   • a Product-level price OVERRIDES a Collection-level price (R12.1, R12.4);
 |   • the Collection-level price is the fallback when no product price exists;
 |   • the collection markup/MUP raises the base (R12.2);
-|   • active customer + online discounts apply cumulatively, buyer-scoped
+|   • only the highest-priority discount applies (no stacking); buyer-scoped
 |     customer discounts only to the matching Buyer (R12.5);
 |   • the resolved price is never negative and tagged with the tenant currency
 |     (R12.4, R39.1).
@@ -121,7 +121,7 @@ it('prefers a product-level price over the collection-level price (R12.1, R12.4)
             Price::create(['level' => Price::LEVEL_COLLECTION, 'ref_id' => $collectionId, 'amount' => 200.0]);
             Price::create(['level' => Price::LEVEL_PRODUCT, 'ref_id' => $product->id, 'amount' => 150.0]);
 
-            $resolved = (new PriceResolutionService())->resolveForProduct($product);
+            $resolved = (new PriceResolutionService)->resolveForProduct($product);
 
             // Product-level price wins over the collection-level price.
             expect($resolved->base)->toBe(150.0);
@@ -149,7 +149,7 @@ it('falls back to the collection-level price and applies its markup (R12.1, R12.
                 'markup_value' => 20.0,
             ]);
 
-            $resolved = (new PriceResolutionService())->resolveForProduct($product);
+            $resolved = (new PriceResolutionService)->resolveForProduct($product);
 
             expect($resolved->base)->toBe(100.0);
             expect(round($resolved->markedUp, 2))->toBe(120.0);
@@ -160,7 +160,7 @@ it('falls back to the collection-level price and applies its markup (R12.1, R12.
     }
 });
 
-it('applies online + buyer-scoped customer discounts cumulatively, never negative (R12.5, R12.4)', function () {
+it('applies only the highest-priority (dealer-scoped) discount, never negative (R12.5, R12.4)', function () {
     $registry = [];
     $tenant = provisionPricingTenant($registry);
 
@@ -187,11 +187,11 @@ it('applies online + buyer-scoped customer discounts cumulatively, never negativ
                 'buyer_id' => 99,
             ]);
 
-            $resolved = (new PriceResolutionService())->resolveForProduct($product, 'dealer', 7);
+            $resolved = (new PriceResolutionService)->resolveForProduct($product, 'dealer', 7);
 
-            // 100 * 0.9 (online) * 0.8 (customer for buyer 7) = 72; buyer 99's
-            // 50% discount is excluded.
-            expect(round($resolved->final, 2))->toBe(72.0);
+            // Discounts never stack: the dealer-scoped 20% outranks the general
+            // online 10%, so 100 * 0.8 = 80; buyer 99's 50% is excluded.
+            expect(round($resolved->final, 2))->toBe(80.0);
             expect($resolved->final)->toBeGreaterThanOrEqual(0.0);
             expect($resolved->currency)->toBe('EUR');
         });

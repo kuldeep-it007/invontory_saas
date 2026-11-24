@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Exceptions\IllegalOrderTransitionException;
 use App\Models\Concerns\TenantAuditable;
+use App\Services\ChainOrderService;
 use App\Services\OrderStateMachine;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use OwenIt\Auditing\Contracts\Auditable;
@@ -32,6 +35,8 @@ use OwenIt\Auditing\Contracts\Auditable;
  *
  * @property int $id
  * @property string|null $order_number
+ * @property string|null $chain_ref
+ * @property int|null $parent_order_id
  * @property string $buyer_type
  * @property int $buyer_id
  * @property string $seller_type
@@ -86,6 +91,8 @@ class Order extends Model implements Auditable
      */
     protected $fillable = [
         'order_number',
+        'chain_ref',
+        'parent_order_id',
         'buyer_type',
         'buyer_id',
         'seller_type',
@@ -98,8 +105,15 @@ class Order extends Model implements Auditable
     protected $casts = [
         'buyer_id' => 'integer',
         'seller_id' => 'integer',
+        'parent_order_id' => 'integer',
         'total' => 'decimal:2',
     ];
+
+    /** Number prefix of an order a dealer places with its distributor (a sales order for the distributor). */
+    public const PREFIX_SALES = 'SO-';
+
+    /** Number prefix of an order a distributor places upstream (its purchase order). */
+    public const PREFIX_PURCHASE = 'PO-';
 
     /**
      * The fixed base offset for the human-facing {@see $order_number}. Adding it
@@ -110,7 +124,8 @@ class Order extends Model implements Auditable
     private const ORDER_NUMBER_BASE = 10_000_000;
 
     /**
-     * Assign the unique, ≥8-digit {@see $order_number} right after the order is
+     * Assign the unique, ≥8-digit {@see $order_number} (prefixed SO-/PO- by
+     * who buys, {@see numberPrefixFor()}) right after the order is
      * inserted (the id exists only post-insert). Derived deterministically from
      * the id so it is unique without a lookup; persisted with a direct update so
      * the model's audit trail still records a single create (R20, R34.1).
@@ -119,12 +134,45 @@ class Order extends Model implements Auditable
     {
         static::created(function (Order $order): void {
             if ($order->order_number === null || $order->order_number === '') {
-                $number = (string) (self::ORDER_NUMBER_BASE + (int) $order->getKey());
+                $number = self::numberPrefixFor($order->buyer_type).(self::ORDER_NUMBER_BASE + (int) $order->getKey());
                 $order->order_number = $number;
                 // Save only the generated column to avoid re-triggering side effects.
                 static::query()->whereKey($order->getKey())->update(['order_number' => $number]);
             }
         });
+    }
+
+    /**
+     * SO- for an order a dealer places (its distributor's sales order), PO-
+     * for an order a distributor places upstream (its purchase order).
+     */
+    public static function numberPrefixFor(?string $buyerType): string
+    {
+        return match ($buyerType) {
+            Dealer::class => self::PREFIX_SALES,
+            Distributor::class => self::PREFIX_PURCHASE,
+            default => '',
+        };
+    }
+
+    /**
+     * The upstream orders supplying this one (Order 2 legs of a chain).
+     *
+     * @return HasMany<Order, $this>
+     */
+    public function upstreamOrders(): HasMany
+    {
+        return $this->hasMany(Order::class, 'parent_order_id');
+    }
+
+    /**
+     * The order this one supplies, when it is an upstream chain leg.
+     *
+     * @return BelongsTo<Order, $this>
+     */
+    public function parentOrder(): BelongsTo
+    {
+        return $this->belongsTo(Order::class, 'parent_order_id');
     }
 
     /**
@@ -173,7 +221,7 @@ class Order extends Model implements Auditable
      *
      * The machine asserts the move is legal BEFORE anything changes: an
      * undefined transition throws a 422
-     * {@see \App\Exceptions\IllegalOrderTransitionException} and the order is
+     * {@see IllegalOrderTransitionException} and the order is
      * left untouched (R21.4). A legal move updates `status` to the resolved
      * state and saves (the change is captured by the audit trail — R34.1).
      *
@@ -188,8 +236,16 @@ class Order extends Model implements Auditable
     {
         $machine ??= new OrderStateMachine;
 
-        $this->status = $machine->assertTransition($this->status, $event);
+        $next = $machine->assertTransition($this->status, $event);
+        // Chain rules: Order 1 waits for its upstream orders (ChainOrderService).
+        app(ChainOrderService::class)->assertCanTransition($this, $event);
+
+        $this->status = $next;
         $this->save();
+
+        if ($this->status === OrderStatus::CANCELLED) {
+            app(ChainOrderService::class)->cascadeCancel($this);
+        }
 
         return $this->status;
     }

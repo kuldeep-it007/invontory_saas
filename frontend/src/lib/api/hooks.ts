@@ -18,6 +18,7 @@ import {
   stockApi,
   tenantUserApi,
   usageApi,
+  type CatalogOwnerFilter,
 } from "./endpoints";
 import type { CartBuyer, StockAllocation, TenantSettings, TenantUserInput } from "./types";
 import { useSetBranding } from "@/components/branding/branding-provider";
@@ -47,6 +48,14 @@ export const useUsage = () => useQuery({ queryKey: ["usage"], queryFn: () => usa
 /* Distributors */
 export const useDistributors = (page = 1) =>
   useQuery({ queryKey: ["distributors", page], queryFn: () => distributorApi.list(page) });
+
+/** Up to 100 dealers of one distributor for pick lists. */
+export const useDealerOptions = (distributorId: number | null) =>
+  useQuery({
+    queryKey: ["dealers", distributorId, "options"],
+    queryFn: () => dealerApi.list(distributorId as number, 1, 100),
+    enabled: distributorId !== null,
+  });
 
 /** A single distributor (for the edit page). */
 export const useDistributor = (id: number | null) =>
@@ -224,15 +233,21 @@ export function useProspectAction() {
 export const useCatalog = (query?: Record<string, string | number>) =>
   useQuery({ queryKey: ["catalog", query], queryFn: () => catalogApi.catalog(query) });
 
-export const useProducts = (page = 1) =>
-  useQuery({ queryKey: ["products", page], queryFn: () => productApi.list(page) });
+/*
+ * Catalogue lists default to the Company's (orderable) catalogue. Management
+ * screens pass `"mine"` to list the caller's own rows (a distributor manages
+ * its own catalogue). The owner is part of the key; the shared prefix keeps
+ * invalidation working for both.
+ */
+export const useProducts = (page = 1, owner?: CatalogOwnerFilter) =>
+  useQuery({ queryKey: ["products", page, owner ?? "company"], queryFn: () => productApi.list(page, 25, owner) });
 
-export const useCategories = () =>
-  useQuery({ queryKey: ["categories"], queryFn: () => catalogApi.categories() });
-export const useCollections = () =>
-  useQuery({ queryKey: ["collections"], queryFn: () => catalogApi.collections() });
-export const useColours = () =>
-  useQuery({ queryKey: ["colours"], queryFn: () => catalogApi.colours() });
+export const useCategories = (owner?: CatalogOwnerFilter) =>
+  useQuery({ queryKey: ["categories", owner ?? "company"], queryFn: () => catalogApi.categories(owner) });
+export const useCollections = (owner?: CatalogOwnerFilter) =>
+  useQuery({ queryKey: ["collections", owner ?? "company"], queryFn: () => catalogApi.collections(owner) });
+export const useColours = (owner?: CatalogOwnerFilter) =>
+  useQuery({ queryKey: ["colours", owner ?? "company"], queryFn: () => catalogApi.colours(owner) });
 
 /** Create a category, then refresh the categories list. */
 export function useCreateCategory() {
@@ -392,8 +407,8 @@ export const useDistributorOptions = () =>
   useQuery({ queryKey: ["distributors", "options"], queryFn: () => distributorApi.list(1, 100) });
 
 /** Products for a dropdown — a single large page is enough for the selector. */
-export const useProductOptions = () =>
-  useQuery({ queryKey: ["products", "options"], queryFn: () => productApi.list(1, 100) });
+export const useProductOptions = (owner?: CatalogOwnerFilter) =>
+  useQuery({ queryKey: ["products", "options", owner ?? "company"], queryFn: () => productApi.list(1, 100, owner) });
 
 export function useCreateStockPoint() {
   const qc = useQueryClient();
@@ -500,6 +515,14 @@ export const useCartSourcing = (buyer: CartBuyer | null, productId: number | nul
     queryKey: ["cart-sourcing", buyer?.buyer_type, buyer?.buyer_id, productId],
     queryFn: () => cartApi.sourcing(buyer as CartBuyer, productId as number),
     enabled: buyer !== null && productId !== null,
+  });
+
+/** A product's stock across the network, grouped by holder (product list). */
+export const useProductStock = (productId: number | null) =>
+  useQuery({
+    queryKey: ["product-stock", productId],
+    queryFn: () => productApi.stock(productId as number),
+    enabled: productId !== null,
   });
 
 /** A single order with its lines, product details and sourcing (order view). */
