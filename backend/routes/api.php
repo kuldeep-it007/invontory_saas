@@ -4,6 +4,7 @@ use App\Http\Controllers\Admin\CentralAuthController;
 use App\Http\Controllers\Admin\DomainAdminController;
 use App\Http\Controllers\Admin\ImpersonationController;
 use App\Http\Controllers\Admin\LogArchiveController;
+use App\Http\Controllers\Admin\MonitoringController;
 use App\Http\Controllers\Admin\PlanAdminController;
 use App\Http\Controllers\Admin\PlatformAdminController;
 use App\Http\Controllers\Admin\SubscriptionAdminController;
@@ -816,6 +817,17 @@ Route::middleware('platform.admin')
             Route::get('/log-archives/{archive}/download', [LogArchiveController::class, 'download'])
                 ->whereNumber('archive')->middleware('throttle:60,1');
 
+            // ── Server monitoring + deployment history (data written by the host agent) ──
+            Route::prefix('/monitoring')->middleware('throttle:120,1')->group(function () {
+                Route::get('/overview', [MonitoringController::class, 'overview']);
+                Route::get('/metrics', [MonitoringController::class, 'metrics']);
+                Route::get('/alerts', [MonitoringController::class, 'alerts']);
+                Route::get('/errors', [MonitoringController::class, 'errors']);
+                Route::get('/thresholds', [MonitoringController::class, 'thresholds']);
+                Route::put('/thresholds', [MonitoringController::class, 'updateThresholds'])->middleware('throttle:20,1');
+                Route::get('/deployments', [MonitoringController::class, 'deployments']);
+                Route::get('/deployments/{id}', [MonitoringController::class, 'deployment'])->where('id', '[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}');
+            });
             // Certificate renewal is kept with the platform admin. Throttled: Let's Encrypt
             // allows only 5 duplicate certificates per domain per week.
             Route::post('/domains/{domain}/renew-ssl', [DomainAdminController::class, 'renewSsl'])

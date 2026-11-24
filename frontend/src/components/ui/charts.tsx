@@ -1,5 +1,7 @@
 "use client";
 
+import { linePath, niceMax, valueAt, type ChartPoint, type Level } from "@/lib/monitoring";
+
 /**
  * Dependency-free chart primitives (SVG/CSS) wired to the white-label theme
  * tokens. Kept intentionally small — enough to turn the dashboard's structured
@@ -154,5 +156,123 @@ export function QuotaBar({
         />
       </span>
     </div>
+  );
+}
+
+/* ─── Time-series chart + meter (monitoring dashboard) ─────────────────────── */
+
+export interface LineSeries {
+  key: string;
+  label: string;
+  color: string;
+}
+
+const W = 600;
+const H = 140;
+
+/** Multi-series SVG line chart over time. Missing samples break the line. `refLines` draws warning/critical levels. */
+export function LineChart({
+  points,
+  series,
+  unit = "",
+  max,
+  refLines = [],
+  format = (v: number) => `${Math.round(v * 10) / 10}`,
+}: {
+  points: ChartPoint[];
+  series: LineSeries[];
+  unit?: string;
+  max?: number;
+  refLines?: { value: number; color: string; label: string }[];
+  format?: (v: number) => string;
+}): JSX.Element {
+  if (points.length < 2) {
+    return <p className="py-8 text-center text-sm text-muted-foreground">Collecting data. The chart appears after a few samples.</p>;
+  }
+  const values = points.flatMap((p) => series.map((s) => valueAt(p, s.key)).filter((v): v is number => typeof v === "number"));
+  const yMax = max ?? niceMax(values);
+  const tMin = points[0].ts;
+  const tMax = points[points.length - 1].ts;
+  const span = tMax - tMin;
+  const fmtTime = (ts: number) => {
+    const d = new Date(ts * 1000);
+    return span > 2 * 86400
+      ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  };
+  const last = (key: string) => {
+    for (let i = points.length - 1; i >= 0; i -= 1) {
+      const v = valueAt(points[i], key);
+      if (typeof v === "number") return v;
+    }
+    return null;
+  };
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" role="img" aria-label={series.map((s) => s.label).join(", ")} preserveAspectRatio="none">
+        {[0, 0.5, 1].map((f) => (
+          <g key={f}>
+            <line x1="0" x2={W} y1={H - f * H} y2={H - f * H} stroke="hsl(var(--border))" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+            <text x="2" y={H - f * H - 3} className="fill-muted-foreground" fontSize="9">
+              {format(yMax * f)}
+              {unit}
+            </text>
+          </g>
+        ))}
+        {refLines
+          .filter((r) => r.value <= yMax)
+          .map((r) => (
+            <line key={r.label} x1="0" x2={W} y1={H - (r.value / yMax) * H} y2={H - (r.value / yMax) * H} stroke={r.color} strokeDasharray="4 3" strokeWidth="1" vectorEffect="non-scaling-stroke">
+              <title>{r.label}</title>
+            </line>
+          ))}
+        {series.map((s) => (
+          <path key={s.key} d={linePath(points, s.key, W, H, yMax, tMin, tMax)} fill="none" stroke={s.color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+        ))}
+        <text x="2" y={H + 13} className="fill-muted-foreground" fontSize="9">{fmtTime(tMin)}</text>
+        <text x={W - 2} y={H + 13} textAnchor="end" className="fill-muted-foreground" fontSize="9">{fmtTime(tMax)}</text>
+      </svg>
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {series.map((s) => {
+          const v = last(s.key);
+          return (
+            <li key={s.key} className="flex items-center gap-1.5 text-muted-foreground">
+              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
+              {s.label}
+              <span className="font-medium tabular-nums text-foreground">{v === null ? "n/a" : `${format(v)}${unit}`}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+const LEVEL_BAR: Record<Level, string> = { ok: "bg-emerald-500", warning: "bg-amber-500", critical: "bg-red-500" };
+
+/** Horizontal meter that turns amber/red at the configured thresholds. */
+export function Meter({ label, value, display, level = "ok" }: { label: string; value: number | null; display: string; level?: Level }): JSX.Element {
+  const pct = value === null ? 0 : Math.max(0, Math.min(100, value));
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-medium tabular-nums text-foreground">{display}</span>
+      </div>
+      <span className="block h-2 overflow-hidden rounded-full bg-muted" role="meter" aria-label={label} aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+        <span className={`block h-full rounded-full transition-all ${LEVEL_BAR[level]}`} style={{ width: `${pct}%` }} />
+      </span>
+    </div>
+  );
+}
+
+/** Coloured dot + label for service availability. */
+export function StatusDot({ up, label, hint }: { up: boolean; label: string; hint?: string }): JSX.Element {
+  return (
+    <span className="inline-flex items-center gap-2 text-sm" title={hint}>
+      <span className={`inline-block h-2.5 w-2.5 rounded-full ${up ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden />
+      <span className="text-foreground">{label}</span>
+      <span className="sr-only">{up ? "up" : "down"}</span>
+    </span>
   );
 }

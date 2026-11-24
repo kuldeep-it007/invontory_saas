@@ -35,6 +35,15 @@
 #   App          artisan <command ...>    restart [service ...]
 #   Server       swap  (top swap up to SWAP_SIZE_GB, default 5 GB, on small servers)
 #                diagnose  (why the API is not healthy: state, health checks, memory, logs)
+#   Quality gate Every `update` (and install) builds the new images, runs the test gate against
+#                them BEFORE anything is started, and stops with the running version untouched if
+#                any mandatory check fails. After start it verifies health and rolls back to the
+#                previous images if the new version is unhealthy. Reports + history are kept in
+#                /opt/inventory/monitor/data/deployments/ and shown in the platform console.
+#   Monitoring   monitor-status  (agent + live metrics summary)   deployments [N]  (history)
+#                monitor-install (re-install the agent)   GATE_SKIP_FRONTEND=1 waives the frontend
+#                gate on very small servers (recorded as waived).   MON_ALERT_WEBHOOK=https://…
+#                posts alerts to a chat/webhook.
 #   CI / VAPT    github-setup  (one-time: deploy key for GitHub Actions, limited to
 #                update + server-audit)   server-audit  (Lynis report)#
 # NON-INTERACTIVE: export the variables below instead of answering prompts, e.g.
@@ -92,6 +101,10 @@ MYSQL_INIT_DIR="$APP_DIR/mysql-init"
 CERT_HOSTS_FILE="$APP_DIR/cert-hosts"      # names on the cert when TLS_MODE=http
 NGINX_CONF="/etc/nginx/sites-available/inventory.conf"
 ACME_ROOT="/var/www/certbot"
+MON_DIR="$APP_DIR/monitor"                 # monitoring agent, config, metrics + deployment history
+MON_DATA="$MON_DIR/data"
+DEPLOYCTL="$MON_DIR/deployctl.py"
+MON_LOG="/var/log/nginx/inventory-monitor.log"
 DEPLOY_KEY="/root/.ssh/inventory_deploy"
 
 # ── Output helpers ───────────────────────────────────────────────────────────
@@ -99,7 +112,7 @@ if [ -t 1 ]; then C_B=$'\033[1m'; C_G=$'\033[32m'; C_Y=$'\033[33m'; C_R=$'\033[3
 step() { printf '\n%s==>%s %s%s%s\n' "$C_G" "$C_0" "$C_B" "$*" "$C_0"; }
 log()  { printf '    %s\n' "$*"; }
 warn() { printf '%s    ! %s%s\n' "$C_Y" "$*" "$C_0" >&2; }
-die()  { printf '%s\nERROR: %s%s\n' "$C_R" "$*" "$C_0" >&2; exit 1; }
+die()  { DEPLOY_REASON="$*"; printf '%s\nERROR: %s%s\n' "$C_R" "$*" "$C_0" >&2; exit 1; }
 trap 'die "failed at line $LINENO (command: $BASH_COMMAND)"' ERR
 
 # ── State (saved answers + generated secrets) ────────────────────────────────
@@ -186,7 +199,7 @@ install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg git openssl ufw fail2ban dnsutils nginx \
+    ca-certificates curl gnupg git openssl ufw fail2ban dnsutils nginx python3 \
     certbot python3-certbot-dns-cloudflare
   systemctl enable --now fail2ban >/dev/null 2>&1 || true
   # The distro "default" site would shadow ours.
@@ -363,7 +376,8 @@ write_runtime_files() {
   fi
   [ -z "${SERVER_IP:-}" ] || set_state SERVER_IP "$SERVER_IP"
   step "Writing runtime configuration to $APP_DIR"
-  mkdir -p "$APP_DIR" "$MYSQL_INIT_DIR"
+  mkdir -p "$APP_DIR" "$MYSQL_INIT_DIR" "$MON_DATA/deployments" "$MON_DIR/config"
+  chmod 750 "$MON_DATA"
 
   # Backend .env (mounted read-only into the containers as /app/.env).
   local mail_block
@@ -495,6 +509,9 @@ x-backend-common: &backend-common
   volumes:
     - ${BACKEND_ENV_FILE}:/app/.env:ro
     - app-storage:/app/storage
+    # Monitoring dashboard: metrics + deployment history are read-only; only thresholds are writable.
+    - ${APP_DIR}/monitor/data:/monitor/data:ro
+    - ${APP_DIR}/monitor/config:/monitor/config
   depends_on:
     mysql:
       condition: service_healthy
@@ -609,7 +626,8 @@ wait_http() { # wait_http URL SECONDS
   done
 }
 
-start_stack() {
+build_images() {
+  deploy_stage build
   step "Building images (first build takes several minutes)"
   # A network hiccup should not cost a whole deploy: retry once, reusing every
   # layer and download that already succeeded.
@@ -618,20 +636,23 @@ start_stack() {
     sleep 30
     compose build || die "image build failed twice. The running site is unchanged. Check the error above, then run: $0 update"
   fi
+}
+start_stack() {
+  deploy_stage start
   step "Starting containers"
-  if ! compose up -d --remove-orphans; then
+  # --no-build: run exactly the images the quality gate just tested.
+  if ! compose up -d --no-build --remove-orphans; then
     diagnose_api
-    die "containers did not start. The cause is in the API log above. Fix it, then run: $0 update"
+    deploy_rollback "containers did not start (cause in the API log above)"
   fi
   log "waiting for the API (runs database migrations on first start)…"
   if ! wait_http "http://127.0.0.1:8000/up" 900; then
     diagnose_api
-    die "API did not become healthy. See the log above."
+    deploy_rollback "API did not become healthy"
   fi
-  wait_http "http://127.0.0.1:3000/" 120 || { compose logs --tail=60 frontend || true; die "frontend did not start"; }
+  wait_http "http://127.0.0.1:3000/" 120 || { compose logs --tail=60 frontend || true; deploy_rollback "frontend did not start"; }
   log "API and frontend are up"
 }
-
 # Everything needed to see why the API is not healthy, in one place.
 diagnose_api() {
   local id
@@ -674,6 +695,237 @@ post_deploy() {
   fi
 }
 
+# ── Quality gate, deployment history, rollback ───────────────────────────────
+# Record keeping must never break a deployment: every call is best-effort.
+rec() {
+  [ -f "$DEPLOYCTL" ] && command -v python3 >/dev/null || return 0
+  MON_DIR="$MON_DIR" python3 "$DEPLOYCTL" "$@" >/dev/null 2>&1 || true
+}
+deploy_stage() { DEPLOY_STAGE="$1"; [ -z "${DEPLOY_ID:-}" ] || rec stage --id "$DEPLOY_ID" --stage "$1"; }
+deploy_trap() {
+  local rc=$?
+  trap - EXIT
+  if [ -n "${DEPLOY_ID:-}" ] && [ -z "${DEPLOY_DONE:-}" ]; then
+    rec finish --id "$DEPLOY_ID" --status failed --reason "${DEPLOY_REASON:-aborted during stage '${DEPLOY_STAGE:-unknown}' (exit $rc)}"
+  fi
+  sleep 0.3   # let the log tee flush
+  exit "$rc"
+}
+deploy_begin() { # deploy_begin TRIGGER
+  mkdir -p "$MON_DATA/deployments"
+  if [ -z "${DEPLOY_ID:-}" ]; then
+    DEPLOY_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(openssl rand -hex 3)"
+    PREV_COMMIT="$(git -C "$SRC_DIR" rev-parse HEAD 2>/dev/null || true)"
+    export DEPLOY_ID PREV_COMMIT
+    mkdir -p "$MON_DATA/deployments/$DEPLOY_ID"
+    exec > >(tee -a "$MON_DATA/deployments/$DEPLOY_ID/deploy.log") 2>&1
+  fi
+  DEPLOY_STAGE=starting
+  trap deploy_trap EXIT
+  rec begin --id "$DEPLOY_ID" --commit pending --branch "${BRANCH:-}" --trigger "${DEPLOY_TRIGGER:-$1}" \
+    --actor "${DEPLOY_ACTOR:-${SUDO_USER:-root}}" --prev-commit "${PREV_COMMIT:-}"
+}
+# After the code is fetched: install the newest gate/agent files and record what is being deployed.
+deploy_record_commit() {
+  install_monitor_files
+  rec begin --id "$DEPLOY_ID" --commit pending --branch "${BRANCH:-}" --trigger "${DEPLOY_TRIGGER:-update}" \
+    --actor "${DEPLOY_ACTOR:-${SUDO_USER:-root}}" --prev-commit "${PREV_COMMIT:-}"
+  rec stage --id "$DEPLOY_ID" --stage fetched --commit "$(git -C "$SRC_DIR" rev-parse HEAD)" \
+    --subject "$(git -C "$SRC_DIR" log -1 --format=%s 2>/dev/null | cut -c1-120)"
+}
+install_monitor_files() {
+  mkdir -p "$MON_DATA/deployments" "$MON_DIR/config"
+  install -m 700 "$SRC_DIR/deploy/gate/deployctl.py" "$DEPLOYCTL" 2>/dev/null || warn "deployctl.py not found in the repository; no gate or history"
+  install -m 700 "$SRC_DIR/deploy/monitor/agent.py" "$MON_DIR/agent.py" 2>/dev/null || true
+  # The gate runs its own unit tests from the checked-out source, not from here.
+}
+# Remember the images that are serving traffic right now, so a failed release can be undone.
+snapshot_for_rollback() {
+  ROLLBACK_READY=0
+  local img
+  for img in inventory-backend inventory-frontend; do
+    if docker image inspect "$img:latest" >/dev/null 2>&1; then
+      docker tag "$img:latest" "$img:rollback" && ROLLBACK_READY=1
+    fi
+  done
+  [ "$ROLLBACK_READY" = 1 ] && log "previous images kept as :rollback" || log "no previous images (first install): nothing to roll back to"
+}
+# Put the source tree, scripts and image tags back as they were, so nothing half-new is left around.
+restore_previous_state() {
+  local img
+  for img in inventory-backend inventory-frontend; do
+    docker image inspect "$img:rollback" >/dev/null 2>&1 && docker tag "$img:rollback" "$img:latest" || true
+  done
+  if [ -n "${PREV_COMMIT:-}" ] && git -C "$SRC_DIR" cat-file -e "$PREV_COMMIT^{commit}" 2>/dev/null; then
+    git -C "$SRC_DIR" reset --hard "$PREV_COMMIT" >/dev/null 2>&1 || true
+    local old; old="$(mktemp)"
+    if git -C "$SRC_DIR" show "$PREV_COMMIT:deploy/deploy.sh" > "$old" 2>/dev/null && [ -s "$old" ]; then
+      install -m 700 "$old" "$APP_DIR/deploy.sh"
+    fi
+    rm -f "$old"
+  fi
+}
+run_gate() {
+  deploy_stage gate
+  step "Quality gate: every mandatory check must pass before anything is started"
+  command -v python3 >/dev/null || die "python3 is required for the quality gate (apt-get install -y python3)"
+  local sha out blocking
+  sha="$(git -C "$SRC_DIR" rev-parse --short HEAD)"
+  out="$MON_DATA/deployments/$DEPLOY_ID"
+  mkdir -p "$out"
+  local args=(gate --mode server --id "$DEPLOY_ID" --src "$SRC_DIR" --image inventory-backend:latest
+              --backend-env "$BACKEND_ENV" --network "${PROJECT}_default" --commit "$sha")
+  [ "${GATE_SKIP_FRONTEND:-}" != "1" ] || args+=(--skip-frontend)
+  if ! MON_DIR="$MON_DIR" python3 "$DEPLOYCTL" "${args[@]}"; then
+    blocking="$(python3 -c "import json,sys;print(', '.join(json.load(open(sys.argv[1]))['blocking']))" "$out/gate-report.json" 2>/dev/null || echo 'see gate.log')"
+    DEPLOY_DONE=1
+    restore_previous_state
+    rec finish --id "$DEPLOY_ID" --status blocked --reason "quality gate failed: ${blocking}"
+    die "DEPLOYMENT BLOCKED by the quality gate (${blocking}). The running version was not touched. Report: $out/gate-report.md"
+  fi
+  log "quality gate passed"
+}
+deploy_rollback() { # deploy_rollback REASON
+  local reason="$1"
+  warn "ROLLBACK: $reason"
+  if [ "${ROLLBACK_READY:-0}" != 1 ]; then
+    die "$reason (first install: there is no previous version to roll back to)"
+  fi
+  deploy_stage rollback
+  restore_previous_state
+  if compose up -d --no-build --force-recreate --remove-orphans \
+     && wait_http "http://127.0.0.1:8000/up" 600 && wait_http "http://127.0.0.1:3000/" 120; then
+    DEPLOY_DONE=1
+    rec finish --id "$DEPLOY_ID" --status rolled_back --reason "$reason" --rollback-to "${PREV_COMMIT:-}"
+    die "$reason. Rolled back to ${PREV_COMMIT:0:8}; the previous version is serving traffic again. (Database migrations are forward-only and were not reverted.)"
+  fi
+  DEPLOY_DONE=1
+  rec finish --id "$DEPLOY_ID" --status failed --reason "$reason; automatic rollback also failed"
+  die "$reason, and the automatic rollback did not become healthy either. Run: $0 diagnose"
+}
+# The release must answer through nginx (TLS, routing) and every background process must be running.
+post_deploy_health() {
+  deploy_stage verify
+  step "Post-deploy health verification"
+  local i code_api="" code_web="" s
+  for i in 1 2 3 4 5 6; do
+    code_api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/up" || true)
+    code_web=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/login" || true)
+    [ "$code_api" = "200" ] && [ "$code_web" = "200" ] && break
+    sleep 10
+  done
+  if [ "$code_api" != "200" ] || [ "$code_web" != "200" ]; then
+    deploy_rollback "post-deploy health check failed (/up -> ${code_api:-none}, /login -> ${code_web:-none})"
+  fi
+  log "https://${DOMAIN}/up -> 200, /login -> 200"
+  sleep 5
+  for s in worker scheduler; do
+    [ "$(compose ps --status running -q "$s" 2>/dev/null | wc -l)" -ge 1 ] || deploy_rollback "the $s container is not running after the release"
+  done
+  log "worker and scheduler running"
+}
+deploy_succeed() {
+  DEPLOY_DONE=1
+  rec finish --id "$DEPLOY_ID" --status success --reason ""
+}
+# nginx: a compact "status request_time" line per request (no URLs, IPs or query strings).
+setup_monitor_log_format() {
+  cat > /etc/nginx/conf.d/inventory-monitor.conf <<'EOF'
+log_format monitor '$status $request_time';
+EOF
+}
+# Host monitoring agent: its own systemd service, independent of the containers.
+install_monitoring() {
+  step "Monitoring agent"
+  mkdir -p "$MON_DATA/deployments" "$MON_DIR/config"
+  chmod 750 "$MON_DATA"
+  [ -f "$MON_DIR/agent.py" ] || { warn "agent.py missing; monitoring not installed"; return 0; }
+  [ -z "${MON_ALERT_WEBHOOK:-}" ] || set_state MON_ALERT_WEBHOOK "$MON_ALERT_WEBHOOK"
+  (umask 077; cat > "$MON_DIR/agent.env" <<EOF
+MON_DIR=$MON_DIR
+APP_DIR=$APP_DIR
+DOMAIN=$DOMAIN
+BACKEND_ENV=$BACKEND_ENV
+MON_NGINX_LOG=$MON_LOG
+MON_ALERT_WEBHOOK=${MON_ALERT_WEBHOOK:-}
+EOF
+  )
+  setup_monitor_log_format
+
+  if [ -f "$NGINX_CONF" ] && ! grep -q 'inventory-monitor.log' "$NGINX_CONF"; then
+    sed -i '0,/client_max_body_size 25m;/s//client_max_body_size 25m;\n    access_log \/var\/log\/nginx\/inventory-monitor.log monitor;/' "$NGINX_CONF"
+  fi
+  cat > /etc/logrotate.d/inventory-monitor <<'EOF'
+/var/log/nginx/inventory-monitor.log {
+    daily
+    rotate 2
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        [ ! -f /run/nginx.pid ] || kill -USR1 "$(cat /run/nginx.pid)"
+    endscript
+}
+EOF
+  nginx -t >/dev/null 2>&1 && { systemctl reload nginx 2>/dev/null || true; } || warn "nginx config test failed; monitor log not enabled (check: nginx -t)"
+  cat > /etc/systemd/system/inventory-monitor.service <<EOF
+[Unit]
+Description=Inventory platform monitoring agent
+After=network-online.target docker.service
+[Service]
+Type=simple
+EnvironmentFile=$MON_DIR/agent.env
+ExecStart=/usr/bin/python3 $MON_DIR/agent.py
+Restart=always
+RestartSec=5
+Nice=10
+CPUQuota=25%
+MemoryMax=150M
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable inventory-monitor >/dev/null 2>&1 || true
+  systemctl restart inventory-monitor || warn "could not start inventory-monitor (journalctl -u inventory-monitor)"
+  log "agent running (every 15 s; metrics in $MON_DATA)"
+}
+cmd_monitor_install() { preflight >/dev/null; install_monitor_files; install_monitoring; }
+cmd_monitor_status() {
+  preflight >/dev/null
+  systemctl is-active --quiet inventory-monitor && log "agent: running" || warn "agent: NOT running (journalctl -u inventory-monitor -n 50)"
+  python3 - "$MON_DATA" <<'PY'
+import json, sys, time, os
+d = sys.argv[1]
+try:
+    c = json.load(open(d + "/current.json")); age = int(time.time() - os.path.getmtime(d + "/current.json"))
+except Exception:
+    print("    no snapshot yet"); sys.exit(0)
+s = c["sample"]
+print(f"    snapshot {age}s old | cpu {s['cpu_pct']}% | mem {s['mem_pct']}% | swap {s['swap_pct']}% | disk {s['disk_pct']}% | api {s['api_ms']} ms | 5xx {s['err5xx_pct']}%")
+down = [k for k, v in c["application"]["services"].items() if not v["up"]]
+print("    services down:", ", ".join(down) if down else "none")
+try:
+    a = json.load(open(d + "/alerts.json"))["active"]
+    print("    active alerts:", "; ".join(x["message"] for x in a) if a else "none")
+except Exception:
+    pass
+PY
+}
+cmd_deployments() {
+  preflight >/dev/null
+  python3 - "$MON_DATA/deployments" "${1:-10}" <<'PY'
+import json, os, sys
+base, n = sys.argv[1], int(sys.argv[2])
+ids = sorted((d for d in os.listdir(base) if os.path.exists(f"{base}/{d}/record.json")), reverse=True)[:n] if os.path.isdir(base) else []
+for i in ids:
+    r = json.load(open(f"{base}/{i}/record.json")); g = r.get("gate") or {}
+    print(f"{r['started_at']}  {r['status']:11} {str(r['commit'])[:8]:8} tests {g.get('passed','-')}/{g.get('failed','-')}/{g.get('skipped','-')} (pass/fail/skip)  {r.get('reason','')[:80]}")
+if not ids: print("no deployments recorded yet")
+PY
+}
 # ── 5. nginx + TLS ───────────────────────────────────────────────────────────
 nginx_reload() { nginx -t >/dev/null 2>&1 || { nginx -t; die "nginx config invalid"; }; systemctl enable nginx >/dev/null 2>&1 || true; systemctl reload nginx 2>/dev/null || systemctl restart nginx; }
 
@@ -752,6 +1004,7 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     client_max_body_size 25m;
+    access_log /var/log/nginx/inventory-monitor.log monitor;
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
 
@@ -935,6 +1188,7 @@ add_header X-Content-Type-Options "nosniff" always;
 add_header X-Frame-Options "SAMEORIGIN" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 client_max_body_size 25m;
+access_log /var/log/nginx/inventory-monitor.log monitor;
 gzip on;
 gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
 proxy_http_version 1.1;
@@ -1223,6 +1477,7 @@ cmd_server_audit() {
 
 # Entry point for the GitHub Actions key: only these commands are allowed.
 cmd_ci() {
+  export DEPLOY_TRIGGER=github-actions DEPLOY_ACTOR=github-actions
   case "${SSH_ORIGINAL_COMMAND:-}" in
     update)       exec bash "$APP_DIR/deploy.sh" update ;;
     server-audit) exec bash "$APP_DIR/deploy.sh" server-audit ;;
@@ -1269,10 +1524,16 @@ cmd_install() {
   install_docker
   setup_swap
   setup_firewall
+  deploy_begin install
   fetch_code
+  deploy_record_commit
   verify_app_patches
   prepare_secrets
   write_runtime_files
+  snapshot_for_rollback
+  build_images
+  run_gate
+  setup_monitor_log_format
   start_stack
   post_deploy
   issue_certificate
@@ -1280,22 +1541,31 @@ cmd_install() {
   setup_cert_renewal
   setup_custom_domains
   smoke_test
+  install_monitoring
+  deploy_succeed
   summary
 }
 
 cmd_update() {
   preflight
   command -v docker >/dev/null || die "not installed yet — run without arguments first"
+  deploy_begin update
   fetch_code
   continue_with_latest_script update
+  deploy_record_commit
   setup_swap   # tops swap up to SWAP_SIZE_GB on small servers; no-op once reached
   verify_app_patches
   prepare_secrets
   write_runtime_files
+  snapshot_for_rollback   # keep the serving images so a bad release can be undone
+  build_images            # build only; nothing running is touched yet
+  run_gate                # any failed mandatory check stops here with production untouched
+  install_monitoring
   start_stack
   post_deploy
-  setup_custom_domains
-  smoke_test
+  post_deploy_health      # nginx -> API/frontend answer, worker + scheduler running; else rollback
+  setup_custom_domains || warn "custom-domain setup reported a problem (the release itself is healthy)"
+  deploy_succeed
   step "Update complete (commit $(git -C "$SRC_DIR" rev-parse --short HEAD))"
 }
 
@@ -1366,6 +1636,9 @@ main() {
     swap) cmd_swap ;;
     diagnose) cmd_diagnose ;;
     github-setup) cmd_github_setup ;;
+    monitor-install) cmd_monitor_install ;;
+    monitor-status) cmd_monitor_status ;;
+    deployments) cmd_deployments "$@" ;;
     ci) cmd_ci ;;    -h|--help|help) usage ;;
     *) die "unknown command '$cmd' (run '$0 help' for the list)" ;;
   esac
