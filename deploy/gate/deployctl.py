@@ -164,13 +164,16 @@ class Gate:
     def say(self, text: str) -> None:
         self.log.write(redact(text) + "\n")
         self.log.flush()
-        print(redact(text), flush=True)
+        try:
+            print(redact(text), flush=True)
+        except UnicodeEncodeError:  # consoles that cannot show every character
+            print(redact(text).encode("ascii", "replace").decode(), flush=True)
 
     def sh(self, cmd: list[str], cwd: Path | None = None, env: dict | None = None, timeout: int = 1800) -> tuple[int, str]:
         self.say(f"$ {' '.join(cmd[:12])}{' …' if len(cmd) > 12 else ''}")
         cmd = [shutil.which(cmd[0]) or cmd[0], *cmd[1:]]
         try:
-            p = subprocess.run(cmd, cwd=cwd, env={**os.environ, **(env or {})}, capture_output=True, text=True,
+            p = subprocess.run(cmd, cwd=cwd, env={**os.environ, **(env or {})}, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                timeout=timeout, check=False)
             out = (p.stdout or "") + (p.stderr or "")
             rc = p.returncode
@@ -397,20 +400,28 @@ class Gate:
             for suite in ("Feature", "Smoke", "Property"):
                 self.pest(suite, mandatory, env, "_mysql")
 
+    def guarded(self, name: str, fn, *args, mandatory: bool = True) -> None:
+        """A crash inside a check must fail the gate (closed), never abort it with a traceback."""
+        try:
+            fn(*args)
+        except Exception as e:  # noqa: BLE001
+            self.add(f"{name}.crashed", "gate", mandatory, "failed", f"{type(e).__name__}: {e}")
+
     def run(self) -> int:
         self.say(f"== quality gate ({self.mode}) {self.id or ''} commit {self.commit} ==")
-        self.check_config()
-        self.check_migrations_static()
-        self.check_dependencies()
+        self.guarded("config", self.check_config)
+        self.guarded("db.migration_files", self.check_migrations_static)
+        self.guarded("deps", self.check_dependencies)
         if self.mode == "server":
-            self.check_server_db()
+            self.guarded("db.connectivity", self.check_server_db)
         self.simple("monitoring.agent_tests", "monitoring", True, [sys.executable, "-m", "unittest", "test_agent", "-q"], self.src / "deploy" / "monitor")
         self.simple("gate.self_tests", "monitoring", True, [sys.executable, "-m", "unittest", "test_deployctl", "-q"], self.src / "deploy" / "gate")
         for suite in ("Unit", "Smoke", "Feature", "Property", "Security"):
             if (self.backend / "tests" / suite).is_dir():
-                self.pest(suite)
-        self.mysql_integration(os.environ.get("GATE_MYSQL_MANDATORY", "false") == "true")
-        self.check_frontend()
+                self.guarded(f"backend.{suite.lower()}", self.pest, suite)
+        mysql_mandatory = os.environ.get("GATE_MYSQL_MANDATORY", "false") == "true"
+        self.guarded("backend.mysql_integration", self.mysql_integration, mysql_mandatory, mandatory=mysql_mandatory)
+        self.guarded("frontend", self.check_frontend)
         return self.finish()
 
     def finish(self) -> int:

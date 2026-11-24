@@ -159,6 +159,7 @@ jobs:
       - name: Install dependencies
         run: |
           composer install --working-dir=backend --no-interaction --prefer-dist --no-progress
+          cp backend/.env.example backend/.env
           npm ci --prefix frontend --no-audit --no-fund
       - name: Run the quality gate (every mandatory check must pass)
         env:

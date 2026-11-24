@@ -97,6 +97,23 @@ class VerdictTest(unittest.TestCase):
             self.assertEqual(report["verdict"], "pass")
             self.assertIn("b", [c["name"] for c in report["checks"] if c["status"] == "failed"])
 
+    def test_a_crashing_check_fails_the_gate_instead_of_aborting_it(self):
+        with tempfile.TemporaryDirectory() as t:
+            g = self.make_gate(t)
+
+            def boom():
+                raise UnicodeDecodeError("utf-8", b"\xed", 0, 1, "bad byte")
+
+            g.guarded("x", boom)
+            self.assertEqual(g.finish(), 1)
+
+    def test_non_utf8_command_output_does_not_crash(self):
+        with tempfile.TemporaryDirectory() as t:
+            g = self.make_gate(t)
+            rc, out = g.sh([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'ok \\xed end')"])
+            self.assertEqual(rc, 0)
+            self.assertIn("end", out)
+            g.log.close()
     def test_junit_parsing_counts_and_categories(self):
         with tempfile.TemporaryDirectory() as t:
             g = self.make_gate(t)
