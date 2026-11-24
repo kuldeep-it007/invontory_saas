@@ -1,0 +1,14 @@
+# Override used by deploy/local/local-env.sh on top of the repository's docker-compose.yml.
+#   - fixed image names, so the quality gate tests exactly the image that runs
+#   - the API container reads the monitoring agent's output (read-only) and may write thresholds,
+#     the same two mounts production uses (/monitor/data and /monitor/config)
+services:
+  api:
+    image: inventory-local-backend:latest
+    volumes:
+      - ${MON_LOCAL_DIR}/data:/monitor/data:ro
+      - ${MON_LOCAL_DIR}/config:/monitor/config
+  worker:
+    image: inventory-local-backend:latest
+  frontend:
+    image: inventory-local-frontend:latest

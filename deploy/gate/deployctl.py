@@ -60,7 +60,7 @@ def dep_dir(dep_id: str, base: Path | None = None) -> Path:
 
 def read_record(d: Path) -> dict:
     try:
-        return json.loads((d / "record.json").read_text())
+        return json.loads((d / "record.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -68,7 +68,7 @@ def read_record(d: Path) -> dict:
 def write_record(d: Path, rec: dict) -> None:
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / "record.json.tmp"
-    tmp.write_text(json.dumps(rec, indent=2))
+    tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
     os.replace(tmp, d / "record.json")
 
 
@@ -226,7 +226,7 @@ class Gate:
         t0 = time.time()
         name = f"backend.{suite.lower()}{label}"
         junit = self.phpunit_junit / f"{suite.lower()}{label}.xml"
-        if self.mode == "server":
+        if self.mode in ("server", "local"):
             cmd = ["docker", "run", "--rm", "--entrypoint", "", "-e", f"APP_KEY={self.app_key}", "-e", "APP_ENV=testing"]
             for k, v in (env or {}).items():
                 cmd += ["-e", f"{k}={v}"]
@@ -252,8 +252,8 @@ class Gate:
     def check_config(self) -> None:
         t0 = time.time()
         required = ["APP_KEY", "APP_URL", "DB_HOST", "DB_DATABASE", "DB_USERNAME", "DB_PASSWORD", "REDIS_HOST", "CENTRAL_DOMAINS"]
-        if self.mode == "ci":
-            keys = {l.split("=", 1)[0].strip() for l in (self.backend / ".env.example").read_text().splitlines()
+        if self.mode in ("ci", "local"):
+            keys = {l.split("=", 1)[0].strip() for l in (self.backend / ".env.example").read_text(encoding="utf-8").splitlines()
                     if "=" in l and not l.lstrip().startswith("#")}
             missing = [k for k in required if k not in keys]
             self.add("config.env_template", "config", True, "failed" if missing else "passed",
@@ -261,7 +261,7 @@ class Gate:
             return
         kv: dict[str, str] = {}
         try:
-            for l in self.backend_env.read_text().splitlines():  # type: ignore[union-attr]
+            for l in self.backend_env.read_text(encoding="utf-8").splitlines():  # type: ignore[union-attr]
                 if "=" in l and not l.lstrip().startswith("#"):
                     k, v = l.split("=", 1)
                     kv[k.strip()] = v.strip().strip("'\"")
@@ -356,7 +356,7 @@ class Gate:
             yield {**env, "DB_HOST": host, "DB_PORT": os.environ.get("GATE_MYSQL_PORT", "3306"),
                    "DB_PASSWORD": os.environ.get("GATE_MYSQL_PASSWORD", "")}
             return
-        if self.mode != "server":
+        if self.mode not in ("server", "local"):
             yield None
             return
         name, net, pw = f"gate-mysql-{secrets.token_hex(3)}", f"gate-net-{secrets.token_hex(3)}", secrets.token_hex(8)
@@ -435,8 +435,8 @@ class Gate:
                   "finished_at": now_iso(), "duration_s": round(time.time() - self.started), "verdict": verdict,
                   "totals": tot, "checks_total": len(self.checks), "blocking": [c["name"] for c in blockers],
                   "categories": self.categories, "checks": self.checks}
-        (self.out / "gate-report.json").write_text(json.dumps(report, indent=2))
-        (self.out / "gate-report.md").write_text(markdown(report))
+        (self.out / "gate-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        (self.out / "gate-report.md").write_text(markdown(report), encoding="utf-8")
         if self.id:
             rec = read_record(dep_dir(self.id))
             if rec:
@@ -466,8 +466,8 @@ def markdown(r: dict) -> str:
 
 
 def cmd_gate(a: argparse.Namespace) -> int:
-    if a.mode == "server" and not a.image:
-        sys.exit("--image is required in server mode")
+    if a.mode in ("server", "local") and not a.image:
+        sys.exit("--image is required in server and local mode")
     return Gate(a).run()
 
 
@@ -487,7 +487,7 @@ def main() -> int:
     f.add_argument("--reason", default=""); f.add_argument("--rollback-to", default="")
     f.set_defaults(fn=cmd_finish)
     g = sub.add_parser("gate")
-    g.add_argument("--mode", required=True, choices=["ci", "server"]); g.add_argument("--id", default="")
+    g.add_argument("--mode", required=True, choices=["ci", "server", "local"]); g.add_argument("--id", default="")
     g.add_argument("--src", default="."); g.add_argument("--image", default=""); g.add_argument("--backend-env", default="")
     g.add_argument("--network", default=""); g.add_argument("--out", default=""); g.add_argument("--commit", default="")
     g.add_argument("--skip-frontend", action="store_true")

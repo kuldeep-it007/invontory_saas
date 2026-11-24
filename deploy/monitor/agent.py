@@ -62,7 +62,8 @@ DEFAULT_THRESHOLDS = {
     "ssl_days_left": [21, 7],
 }
 LOWER_IS_WORSE = {"ssl_days_left"}
-SERVICES = ["mysql", "redis", "api", "worker", "scheduler", "frontend"]
+SERVICES = os.environ.get("MON_SERVICES", "mysql,redis,api,worker,scheduler,frontend").split(",")
+UNITS = os.environ.get("MON_UNITS", "nginx,fail2ban,docker").split(",")
 
 
 def now() -> float:
@@ -277,7 +278,7 @@ def services_state() -> dict:
         svc, st, status, ports = (line.split("|") + ["", "", ""])[:4]
         if svc in state:
             state[svc] = {"up": st == "running" and "unhealthy" not in status, "status": status, "ports": ports}
-    for unit in ("nginx", "fail2ban", "docker"):
+    for unit in UNITS:
         r = run(["systemctl", "is-active", unit])
         state[unit] = {"up": bool(r and r.strip() == "active"), "status": (r or "inactive").strip(), "ports": ""}
     return state
@@ -313,9 +314,10 @@ def queue_stats() -> dict:
     if not cid:
         return {"up": False, "depth": None}
     out = run(["docker", "exec", cid, "sh", "-c",
-               'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning llen queues:default; '
-               'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning zcard queues:default:delayed; '
-               'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning info memory | grep used_memory_human'])
+               'A=${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"}; '
+               'redis-cli $A --no-auth-warning llen queues:default; '
+               'redis-cli $A --no-auth-warning zcard queues:default:delayed; '
+               'redis-cli $A --no-auth-warning info memory | grep used_memory_human'])
     if out is None:
         return {"up": False, "depth": None}
     lines = out.split()

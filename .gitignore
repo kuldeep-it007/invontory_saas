@@ -129,3 +129,5 @@ rosetta_1
 rosetta_1/
 .github
 .github/
+# Local monitoring agent output (deploy/local/local-env.sh)
+/.local-monitor/
