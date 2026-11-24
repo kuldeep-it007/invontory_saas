@@ -72,7 +72,11 @@ function buildHeaders(hasBody: boolean): HeadersInit {
 
 async function parseError(res: Response): Promise<ApiError> {
   let code = "http_error";
-  let message = res.statusText || "Request failed";
+  // Proxy/gateway failures (502/503/504) often carry HTML or no body; give them a clear default.
+  let message =
+    res.status >= 500
+      ? "The server had a problem handling this request. Please try again shortly."
+      : res.statusText || "Request failed";
   let details: Record<string, unknown> | null = null;
 
   try {
@@ -117,7 +121,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const text = await res.text();
   if (!text) return undefined as T;
 
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(res.status, "INVALID_RESPONSE", "The server sent an unexpected response. Please try again.");
+  }
 }
 
 export const api = {

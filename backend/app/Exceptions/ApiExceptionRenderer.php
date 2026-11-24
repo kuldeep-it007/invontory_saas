@@ -7,6 +7,7 @@ namespace App\Exceptions;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -88,6 +89,13 @@ class ApiExceptionRenderer
                 404,
                 'NOT_FOUND',
                 'The requested resource was not found.',
+                null,
+            ],
+            // Database failures (missing table, unreachable tenant DB, ...). Never leak SQL; the full error is still reported to the log.
+            $e instanceof QueryException => [
+                500,
+                'DATABASE_ERROR',
+                config('app.debug') ? $e->getMessage() : 'We could not load this data right now. Please try again shortly.',
                 null,
             ],
             // Negative-stock rejection: a 422 that must IDENTIFY the insufficient
